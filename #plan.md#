@@ -781,33 +781,76 @@ Given prior experience with the colourshift project, a Python desktop GUI or lig
 
 ```text
 metamerism/
-    pyproject.toml
-    README.md
-    .python-version
-    .gitignore
-
-    src/
-        metamerism/
-
-            spectra/
-            colorimetry/
-            illuminants/
-            pigments/
-            mixing/
-            search/
-
-    data/
-        pigments/
-        illuminants/
-        observers/
-        examples/
-
-    notebooks/
-
-    tests/
-
-    docs/
-        README.md
+│
+├── pyproject.toml
+├── README.md
+├── .python-version
+├── .gitignore
+│
+├── src/
+│   └── metamerism/
+│       ├── __init__.py
+│       │
+│       ├── core/                  # no internal dependencies
+│       │   ├── __init__.py
+│       │   ├── spectrum.py        # Spectrum, Provenance, CANONICAL_GRID
+│       │   ├── observer.py        # Observer, CMF loading
+│       │   └── exceptions.py      # all package exceptions in one place
+│       │
+│       ├── colorimetry/           # depends on core only
+│       │   ├── __init__.py
+│       │   ├── tristimulus.py     # XYZ calculation
+│       │   ├── spaces.py          # Lab, LCh, OKLab conversions
+│       │   └── difference.py      # ΔE76, ΔE00
+│       │
+│       ├── illuminants/           # depends on core only
+│       │   ├── __init__.py
+│       │   ├── standard.py        # D65, D50, A — loaded from data/
+│       │   ├── led.py             # Gaussian models, RGBW mixing
+│       │   └── measured.py        # loader for measured LED spectra
+│       │
+│       ├── pigments/              # depends on core only
+│       │   ├── __init__.py
+│       │   ├── database.py        # PigmentEntry, in-memory DB, queries
+│       │   └── loaders.py         # CSV/Golden format ingestion
+│       │
+│       ├── mixing/                # depends on core, pigments
+│       │   ├── __init__.py
+│       │   ├── base.py            # MixtureModel protocol, MixturePrediction
+│       │   ├── linear.py
+│       │   ├── log_reflectance.py
+│       │   └── kubelka_munk.py
+│       │
+│       ├── search/                # depends on everything above
+│       │   ├── __init__.py
+│       │   ├── candidates.py      # CandidatePair, serialisation
+│       │   ├── paint_search.py    # combinatorial paint-pair search
+│       │   ├── light_search.py    # linear algebra LED search
+│       │   └── scoring.py         # composite J, lexicographic ranking
+│       │
+│       └── io/                    # depends on core, candidates
+│           ├── __init__.py
+│           ├── export.py          # candidate reports, recipe sheets
+│           └── spectrophotometer.py  # measured swatch ingest
+│
+├── data/
+│   ├── observers/                 # CIE 1931, CIE 2006 CMF tables (CSV)
+│   ├── illuminants/               # D65, D50, A spectral data (CSV)
+│   ├── pigments/                  # Golden et al. reflectance data (CSV)
+│   └── examples/                  # example candidate files
+│
+├── tests/
+│   ├── core/
+│   ├── colorimetry/
+│   ├── illuminants/
+│   ├── pigments/
+│   ├── mixing/
+│   ├── search/
+│   └── io/
+│
+├── notebooks/                     # exploratory Jupyter work
+│
+└── docs/
 ```
 
 ### First milestone code path
