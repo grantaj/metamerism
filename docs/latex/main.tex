@@ -1,0 +1,588 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\usepackage{amsmath,amssymb,amsfonts,mathtools}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{siunitx}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage[backend=biber,style=authoryear,natbib=true,maxcitenames=2,maxbibnames=99]{biblatex}
+\addbibresource{references.bib}
+
+\geometry{margin=27mm}
+\setlist{itemsep=0.25em, topsep=0.4em}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={Mathematical Underpinnings of a Metameric Paint-Light Exploration Tool},
+  pdfauthor={Alex Grant / internal project note}
+}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\argmax}{\operatorname*{arg\,max}}
+\newcommand{\argmin}{\operatorname*{arg\,min}}
+\newcommand{\dd}{\,\mathrm{d}}
+\newcommand{\ones}{\mathbf{1}}
+\newcommand{\vect}[1]{\boldsymbol{#1}}
+\newcommand{\mat}[1]{\mathbf{#1}}
+\newcommand{\hadamard}{\odot}
+\newcommand{\Lab}{L^*a^*b^*}
+\newcommand{\DE}{\Delta E}
+
+\title{Mathematical Underpinnings of a Metameric Paint--Light Exploration Tool\\
+\large Internal Technical Note, Initial Draft}
+\author{Metamerism Project}
+\date{7 June 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This technical note sets out an initial mathematical framework for a software-assisted experimental program in metameric painting under controlled illumination. Painted surfaces are represented by spectral reflectance functions, illumination by spectral power distributions, and colour perception by low-dimensional observer projections derived from colour matching functions. Within this formulation, metamerism is expressed as a kernel condition: two distinct reflectance spectra are metameric under an illuminant when their difference lies in, or close to, the null space of the illuminant-weighted colour-response operator. The note then extends the standard fixed-illuminant setting to programmable RGB, RGBW, or multi-primary LED illumination, in which the illuminant itself is a controllable linear combination of channel spectra. This turns the artistic problem into a constrained optimisation over paint mixtures and lighting states: find two physically realisable paint reflectances and two practical illuminants such that the pair is visually concealed under one lighting state and revealed under another. The note also introduces approximate mixture models, including direct reflectance mixing, log-reflectance mixing, and the single-constant Kubelka--Munk model, and identifies the role of empirical calibration by spectrophotometric measurement.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Scope and modelling position}
+
+The project aims to construct a computational and experimental system for discovering paint--light systems that exhibit strong controlled metamerism. In practical terms, the desired outcome is a pair of painted regions that are hard to distinguish under one lighting condition and readily distinguishable under another. The intended application is physical painting and installation, not merely screen simulation.
+
+The mathematical framework is deliberately modular. Some components, such as the mapping from spectral reflectance and spectral irradiance to CIE tristimulus values, are standard colourimetry \citep{CIE0152018,WyszeckiStiles2000,Berns2019}. Other components, especially paint mixture prediction, are necessarily approximate and must eventually be calibrated against measured swatches. This document therefore distinguishes between:
+\begin{enumerate}[label=(\roman*)]
+  \item standard colourimetric transformations;
+  \item controllable illumination models;
+  \item approximate reflectance-mixture models;
+  \item optimisation criteria for candidate discovery; and
+  \item empirical calibration required for studio reliability.
+\end{enumerate}
+
+The key conceptual shift is that controlled illumination should be treated not as an external viewing condition but as part of the artwork's material system. Mathematically, the light defines the projection under which a high-dimensional reflectance spectrum becomes a three-dimensional colour response. Programmable illumination makes that projection partially designable.
+
+\section{Notation}
+
+\begin{longtable}{@{}p{0.22\linewidth}p{0.70\linewidth}@{}}
+\toprule
+Symbol & Meaning \\
+\midrule
+$\lambda$ & Wavelength, typically in nanometres. \\
+$\Lambda$ & Visible wavelength interval, e.g. $[380,780]$ nm. \\
+$r(\lambda)$ & Spectral reflectance of a painted surface, $0 \le r(\lambda) \le 1$. \\
+$i(\lambda)$ & Spectral power distribution of an illuminant, $i(\lambda) \ge 0$. \\
+$s(\lambda)$ & Reflected spectrum reaching the eye, $s(\lambda)=i(\lambda)r(\lambda)$. \\
+$\bar{x},\bar{y},\bar{z}$ & CIE colour matching functions. \\
+$\vect{t}$ & Tristimulus vector, usually $[X,Y,Z]^\top$. \\
+$\Phi_i(r)$ & Perceptual colour representation of reflectance $r$ under illuminant $i$, e.g. CIELAB. \\
+$\DE$ & Colour difference, e.g. $\DE_{00}$ for CIEDE2000. \\
+$\mat{C}$ & Matrix of sampled colour matching functions. \\
+$\mat{W}$ & Diagonal matrix of wavelength integration weights. \\
+$\mat{A}$ & Discrete observer/integration matrix, usually $\mat{A}=\mat{C}\mat{W}$. \\
+$\vect{r},\vect{i}$ & Discretised reflectance and illuminant vectors. \\
+$\mat{E}$ & Matrix whose columns are LED channel spectra. \\
+$\vect{u}$ & LED channel drive vector. \\
+$\mat{M}_{\vect{r}}$ & Matrix mapping LED drive values to tristimulus response for reflectance $\vect{r}$. \\
+\bottomrule
+\end{longtable}
+
+\section{Spectral representation}
+
+Let the visible wavelength interval be
+\begin{equation}
+\Lambda=[\lambda_{\min},\lambda_{\max}],
+\end{equation}
+with a typical computational choice of $\lambda_{\min}=\SI{380}{\nano\metre}$ and $\lambda_{\max}=\SI{780}{\nano\metre}$. A painted surface is modelled by a spectral reflectance function
+\begin{equation}
+ r : \Lambda \rightarrow [0,1],
+\end{equation}
+where $r(\lambda)$ is the fraction of incident radiant power reflected at wavelength $\lambda$. An illuminant is represented by a spectral power distribution
+\begin{equation}
+ i : \Lambda \rightarrow \R_{\ge 0}.
+\end{equation}
+The reflected spectrum reaching the eye, before geometrical and viewing-condition corrections, is
+\begin{equation}
+ s(\lambda)=i(\lambda)r(\lambda).
+ \label{eq:reflected_spectrum}
+\end{equation}
+
+In numerical work, spectra are sampled on a grid
+\begin{equation}
+ \lambda_1,\lambda_2,\ldots,\lambda_n,
+\end{equation}
+and represented as vectors
+\begin{equation}
+ \vect{r}=[r(\lambda_1),\ldots,r(\lambda_n)]^\top,\qquad
+ \vect{i}=[i(\lambda_1),\ldots,i(\lambda_n)]^\top.
+\end{equation}
+The reflected spectrum is then
+\begin{equation}
+ \vect{s}=\vect{i}\hadamard\vect{r}
+      =\diag(\vect{i})\vect{r}
+      =\diag(\vect{r})\vect{i},
+ \label{eq:discrete_reflected_spectrum}
+\end{equation}
+where $\hadamard$ denotes elementwise multiplication.
+
+\section{Colourimetric projection}
+
+The standard CIE tristimulus values are obtained by integrating the reflected spectrum against colour matching functions \citep{CIE0152018,WyszeckiStiles2000}. In continuous form,
+\begin{align}
+ X &= k \int_\Lambda i(\lambda)r(\lambda)\bar{x}(\lambda)\dd\lambda, \\
+ Y &= k \int_\Lambda i(\lambda)r(\lambda)\bar{y}(\lambda)\dd\lambda, \\
+ Z &= k \int_\Lambda i(\lambda)r(\lambda)\bar{z}(\lambda)\dd\lambda.
+ \label{eq:xyz_integrals}
+\end{align}
+For object colours, the normalisation constant is commonly chosen so that a perfect reflecting diffuser has $Y=100$ under the illuminant:
+\begin{equation}
+ k=\frac{100}{\int_\Lambda i(\lambda)\bar{y}(\lambda)\dd\lambda}.
+ \label{eq:k_norm}
+\end{equation}
+Equivalent discrete formulae are
+\begin{align}
+ X &= k \sum_{j=1}^{n} i_j r_j \bar{x}_j \Delta\lambda_j,\\
+ Y &= k \sum_{j=1}^{n} i_j r_j \bar{y}_j \Delta\lambda_j,\\
+ Z &= k \sum_{j=1}^{n} i_j r_j \bar{z}_j \Delta\lambda_j.
+\end{align}
+Let
+\begin{equation}
+ \mat{C}=\begin{bmatrix}
+ \bar{x}_1 & \cdots & \bar{x}_n\\
+ \bar{y}_1 & \cdots & \bar{y}_n\\
+ \bar{z}_1 & \cdots & \bar{z}_n
+ \end{bmatrix},\qquad
+ \mat{W}=\diag(\Delta\lambda_1,\ldots,\Delta\lambda_n),
+\end{equation}
+and define $\mat{A}=k\mat{C}\mat{W}$. Then the tristimulus vector is
+\begin{equation}
+ \vect{t}=\begin{bmatrix}X\\Y\\Z\end{bmatrix}
+          =\mat{A}\diag(\vect{i})\vect{r}
+          =\mat{A}\diag(\vect{r})\vect{i}.
+ \label{eq:operator_basic}
+\end{equation}
+For a fixed illuminant $\vect{i}$, the map from reflectance to tristimulus values is linear:
+\begin{equation}
+ \vect{r}\mapsto \mat{T}_{\vect{i}}\vect{r},\qquad
+ \mat{T}_{\vect{i}}=\mat{A}\diag(\vect{i})\in\R^{3\times n}.
+ \label{eq:T_i}
+\end{equation}
+
+Subsequent transformations such as $XYZ$ to CIELAB, CIELCH, sRGB, or a colour appearance model are generally nonlinear and depend on white point and viewing assumptions \citep{Fairchild2013,Hunt2004}. For initial candidate ranking, CIELAB and CIEDE2000 are a practical starting point \citep{CIE1422001,LuoCuiRigg2001,SharmaWuDalal2005}.
+
+\section{Metamerism as a kernel condition}
+
+Two reflectance spectra $\vect{r}_1,\vect{r}_2\in\R^n$ are exact metamers under illuminant $\vect{i}$ and observer matrix $\mat{A}$ if
+\begin{equation}
+ \mat{T}_{\vect{i}}\vect{r}_1=\mat{T}_{\vect{i}}\vect{r}_2.
+\end{equation}
+Equivalently, defining the reflectance difference
+\begin{equation}
+ \Delta\vect{r}=\vect{r}_1-\vect{r}_2,
+\end{equation}
+we have
+\begin{equation}
+ \mat{T}_{\vect{i}}\Delta\vect{r}=\vect{0}.
+ \label{eq:metamer_kernel}
+\end{equation}
+Thus metameric differences lie in the null space
+\begin{equation}
+ \Delta\vect{r}\in\ker(\mat{T}_{\vect{i}}).
+\end{equation}
+Since $\mat{T}_{\vect{i}}\in\R^{3\times n}$ and typically $n\gg 3$, this null space is high-dimensional. Metamerism is therefore not exceptional in the space of spectra; it is a consequence of projecting high-dimensional spectral information into a low-dimensional observer response.
+
+This observation is central to the project. A colour match is not a statement that two reflectance spectra are physically similar. It is a statement that they are equivalent under a particular observer--illuminant projection.
+
+\section{Approximate perceptual metamerism}
+
+Exact equality in tristimulus space is not necessary for practical painting. Let $\Phi_{\vect{i}}(\vect{r})$ denote a perceptual representation of reflectance $\vect{r}$ under illuminant $\vect{i}$, for example CIELAB values computed from the corresponding $XYZ$ values. Let $d$ be a perceptual colour-difference metric. Approximate metamerism under $\vect{i}$ is the condition
+\begin{equation}
+ d\!\left(\Phi_{\vect{i}}(\vect{r}_1),\Phi_{\vect{i}}(\vect{r}_2)\right)<\varepsilon.
+ \label{eq:approx_metamerism}
+\end{equation}
+For practical use, $d$ may initially be $\DE_{00}$, the CIEDE2000 colour-difference formula \citep{CIE1422001,LuoCuiRigg2001,SharmaWuDalal2005}. Candidate thresholds are project-dependent. For example, $\DE_{00}<2$ is a plausible starting point for a close match, but the perceptual judgement will depend on spatial adjacency, texture, gloss, viewing adaptation, and observer variation.
+
+\section{Programmable illumination}
+
+A distinctive feature of this project is that the illuminant is controllable. For an $m$-channel LED source, let the channel spectral power distributions be
+\begin{equation}
+ \vect{e}_1,\vect{e}_2,\ldots,\vect{e}_m\in\R^n_{\ge 0}.
+\end{equation}
+Collect these into the matrix
+\begin{equation}
+ \mat{E}=\begin{bmatrix}\vect{e}_1 & \vect{e}_2 & \cdots & \vect{e}_m\end{bmatrix}\in\R^{n\times m}.
+\end{equation}
+Let the channel drive vector be
+\begin{equation}
+ \vect{u}=[u_1,\ldots,u_m]^\top,
+\end{equation}
+with box constraints
+\begin{equation}
+ 0\le u_j\le 1,\qquad j=1,\ldots,m.
+ \label{eq:channel_box_constraints}
+\end{equation}
+The illuminant spectrum is then modelled as
+\begin{equation}
+ \vect{i}(\vect{u})=\mat{E}\vect{u}=\sum_{j=1}^{m}u_j\vect{e}_j.
+ \label{eq:led_illuminant}
+\end{equation}
+For RGB illumination, $m=3$; for RGBW, $m=4$; for theatrical or architectural multi-primary sources, $m$ may be larger.
+
+The linear combination in \cref{eq:led_illuminant} is a first-order model. Real LED systems may require channel response functions $f_j(u_j)$ to capture nonlinearity, thermal effects, drive-current dependence, or PWM/dimming characteristics:
+\begin{equation}
+ \vect{i}(\vect{u})=\sum_{j=1}^{m} f_j(u_j)\vect{e}_j.
+ \label{eq:nonlinear_led}
+\end{equation}
+The linear model is appropriate as a starting point and can be refined after measurement.
+
+\section{Paint-specific LED response matrices}
+
+Substituting \cref{eq:led_illuminant} into \cref{eq:operator_basic}, the tristimulus vector for reflectance $\vect{r}$ under LED drive vector $\vect{u}$ is
+\begin{equation}
+ \vect{t}(\vect{r},\vect{u})
+ =\mat{A}\diag(\vect{r})\mat{E}\vect{u}.
+ \label{eq:paint_led_response}
+\end{equation}
+Define
+\begin{equation}
+ \mat{M}_{\vect{r}}=\mat{A}\diag(\vect{r})\mat{E}\in\R^{3\times m}.
+ \label{eq:paint_response_matrix}
+\end{equation}
+Then
+\begin{equation}
+ \vect{t}(\vect{r},\vect{u})=\mat{M}_{\vect{r}}\vect{u}.
+ \label{eq:paint_response_linear}
+\end{equation}
+This is a useful reduction: for a fixed painted surface, the mapping from LED channel values to tristimulus response is linear in the drive vector, provided the LED spectra combine linearly.
+
+For two reflectances $\vect{r}_1$ and $\vect{r}_2$, the tristimulus difference under LED drive $\vect{u}$ is
+\begin{equation}
+ \Delta\vect{t}(\vect{u})
+ =\left(\mat{M}_{\vect{r}_1}-\mat{M}_{\vect{r}_2}\right)\vect{u}.
+ \label{eq:D_u}
+\end{equation}
+Let
+\begin{equation}
+ \mat{D}=\mat{M}_{\vect{r}_1}-\mat{M}_{\vect{r}_2}.
+\end{equation}
+Then
+\begin{equation}
+ \Delta\vect{t}(\vect{u})=\mat{D}\vect{u}.
+\end{equation}
+A conceal lighting state should make $\mat{D}\vect{u}$ small in a perceptually meaningful sense. A reveal lighting state should make the perceptual difference large, subject to practical constraints.
+
+\section{Conceal/reveal formulation}
+
+The artistic objective can now be written as a constrained design problem. Find
+\begin{equation}
+ \vect{r}_1,\vect{r}_2,\vect{u}_{c},\vect{u}_{r}
+\end{equation}
+where $\vect{r}_1$ and $\vect{r}_2$ are physically realisable paint reflectances, $\vect{u}_{c}$ is a conceal-light drive vector, and $\vect{u}_{r}$ is a reveal-light drive vector, such that
+\begin{align}
+ \DE_c &= d\!\left(\Phi(\vect{r}_1,\vect{u}_{c}),\Phi(\vect{r}_2,\vect{u}_{c})\right) \quad \text{is small},\\
+ \DE_r &= d\!\left(\Phi(\vect{r}_1,\vect{u}_{r}),\Phi(\vect{r}_2,\vect{u}_{r})\right) \quad \text{is large}.
+\end{align}
+A hard-constraint version is
+\begin{align}
+ \DE_c &< \varepsilon,\label{eq:de_c_constraint}\\
+ \DE_r &> \eta,\label{eq:de_r_constraint}
+\end{align}
+where $\varepsilon$ is the maximum acceptable visible difference under concealment and $\eta$ is the minimum desired reveal difference.
+
+A simple scalar objective is
+\begin{equation}
+ J=\frac{\DE_r}{\DE_c+\delta},
+ \label{eq:ratio_score}
+\end{equation}
+where $\delta>0$ prevents division by zero. Alternatively,
+\begin{equation}
+ J=\DE_r-\alpha\DE_c,
+ \label{eq:weighted_score}
+\end{equation}
+with $\alpha>0$. In practice, the hard-constraint formulation may be more useful: first require a sufficiently good conceal match, then rank candidates by reveal strength and studio practicality.
+
+\section{Brightness and usability constraints}
+
+Unconstrained optimisation can produce useless solutions. For example, it may choose a conceal light that is nearly black, or a reveal light that is unusably saturated or dim. Let $Y(\vect{r},\vect{u})$ denote the luminance component of the predicted tristimulus response. Basic constraints include
+\begin{equation}
+ Y_{\min}\le Y(\vect{r}_q,\vect{u}_p)\le Y_{\max},
+ \qquad q\in\{1,2\},\quad p\in\{c,r\}.
+ \label{eq:Y_bounds}
+\end{equation}
+If the reveal should not be merely a lightness difference, impose
+\begin{equation}
+ |Y(\vect{r}_1,\vect{u}_r)-Y(\vect{r}_2,\vect{u}_r)|<\tau_r.
+ \label{eq:Y_reveal_match}
+\end{equation}
+If luminance contrast is allowed to be part of the reveal, then \cref{eq:Y_reveal_match} can be omitted or weakened. Under concealment, it is usually useful to require
+\begin{equation}
+ |Y(\vect{r}_1,\vect{u}_c)-Y(\vect{r}_2,\vect{u}_c)|<\tau_c.
+ \label{eq:Y_conceal_match}
+\end{equation}
+
+Additional lighting constraints may include maximum total optical power, maximum channel values, minimum white-channel contribution, thermal stability, and subjective acceptability of the illuminating field. These are not colourimetric constraints, but they are important for exhibition viability.
+
+\section{Reflectance mixture models}
+
+The unknown reflectances $\vect{r}_1$ and $\vect{r}_2$ are not arbitrary. They must be generated from available paints, including single-pigment commercial colours and mixtures. Let the reflectance spectra of available component paints be
+\begin{equation}
+ \vect{p}_1,\vect{p}_2,\ldots,\vect{p}_N\in[0,1]^n.
+\end{equation}
+A mixture recipe is represented by weights
+\begin{equation}
+ \vect{w}=[w_1,\ldots,w_N]^\top
+\end{equation}
+in the simplex
+\begin{equation}
+ w_j\ge0,\qquad \sum_{j=1}^{N}w_j=1.
+ \label{eq:paint_simplex}
+\end{equation}
+A mixture model is a function
+\begin{equation}
+ \vect{r}_{\mathrm{mix}}=F(\vect{p}_1,\ldots,\vect{p}_N;\vect{w}).
+ \label{eq:mixture_function}
+\end{equation}
+Real paint mixing is governed by absorption, scattering, concentration, binder, substrate, film thickness, and surface geometry. Consequently, $F$ is not known a priori from reflectance spectra alone. The project should therefore maintain several mixture models and compare them empirically.
+
+\subsection{Linear reflectance mixing}
+
+The simplest model is direct reflectance mixing:
+\begin{equation}
+ \vect{r}_{\mathrm{mix}}=\sum_{j=1}^{N}w_j\vect{p}_j.
+ \label{eq:linear_reflectance_mixing}
+\end{equation}
+This model is generally not physically correct for opaque subtractive paint mixtures, but it provides a useful baseline and a simple sanity check.
+
+\subsection{Log-reflectance mixing}
+
+A more subtractive approximation is geometric mixing:
+\begin{equation}
+ \log \vect{r}_{\mathrm{mix}}=\sum_{j=1}^{N}w_j\log \vect{p}_j,
+ \label{eq:log_mixing}
+\end{equation}
+where the logarithm is applied elementwise after clipping reflectance values away from zero. Equivalently,
+\begin{equation}
+ \vect{r}_{\mathrm{mix}}=\prod_{j=1}^{N}\vect{p}_j^{\,w_j},
+\end{equation}
+with powers and products taken elementwise. This captures the intuition that absorptions compound multiplicatively, but it is still a heuristic. Related strategies appear in computational subtractive-colour approximations when full material characterisation is unavailable \citep{Burns2017Subtractive}.
+
+\subsection{Single-constant Kubelka--Munk model}
+
+The Kubelka--Munk theory is a classical two-flux model for diffuse reflection from scattering and absorbing layers \citep{KubelkaMunk1931,Kubelka1948,Myrick2011}. For an optically thick layer under the single-constant approximation, the Kubelka--Munk function is
+\begin{equation}
+ q=\frac{K}{S}=\frac{(1-r)^2}{2r},
+ \label{eq:KS_from_R}
+\end{equation}
+where $K$ is an absorption coefficient, $S$ is a scattering coefficient, and $r$ is reflectance at a given wavelength. Applied wavelength by wavelength, define
+\begin{equation}
+ \vect{q}_j=\frac{(\ones-\vect{p}_j)^2}{2\vect{p}_j},
+ \label{eq:q_component}
+\end{equation}
+where division and powers are elementwise. A simple mixture approximation is
+\begin{equation}
+ \vect{q}_{\mathrm{mix}}=\sum_{j=1}^{N}w_j\vect{q}_j.
+ \label{eq:q_mix}
+\end{equation}
+Solving \cref{eq:KS_from_R} for $r$ gives
+\begin{equation}
+ r=1+q-\sqrt{q^2+2q}.
+ \label{eq:R_from_Q_scalar}
+\end{equation}
+Thus
+\begin{equation}
+ \vect{r}_{\mathrm{mix}}=\ones+\vect{q}_{\mathrm{mix}}-
+ \sqrt{\vect{q}_{\mathrm{mix}}^{\,2}+2\vect{q}_{\mathrm{mix}}},
+ \label{eq:R_from_Q_vector}
+\end{equation}
+with the square root applied elementwise.
+
+The single-constant model is not the full Kubelka--Munk theory. It assumes optically thick layers and collapses absorption and scattering into the ratio $K/S$. It also ignores surface reflection, substrate effects, and finite film thickness. Corrections such as Saunderson corrections may be relevant when instrument geometry and surface reflection are significant \citep{Saunderson1942}. Nevertheless, the $K/S$ transformation is a useful physically motivated starting point, and the Golden Paint Spectra dataset explicitly includes sampled reflectance values and $K/S$ data for Golden acrylic paints \citep{GoldenSpectra,YaleGoldenSpectra}.
+
+\section{Optimisation over paint and light}
+
+Let the two paint recipes be $\vect{w}_1$ and $\vect{w}_2$, and let
+\begin{equation}
+ \vect{r}_1=F(\vect{w}_1),\qquad \vect{r}_2=F(\vect{w}_2),
+\end{equation}
+where the dependence on the component spectra is suppressed. Let the lighting states be $\vect{u}_c$ and $\vect{u}_r$. A general optimisation problem is
+\begin{equation}
+ \max_{\vect{w}_1,\vect{w}_2,\vect{u}_c,\vect{u}_r} J(\vect{w}_1,\vect{w}_2,\vect{u}_c,\vect{u}_r)
+ \label{eq:general_optimisation}
+\end{equation}
+subject to
+\begin{align}
+ \vect{w}_1,\vect{w}_2 &\in \Delta_N,\\
+ \vect{u}_c,\vect{u}_r &\in [0,1]^m,\\
+ \DE_c &< \varepsilon,\\
+ Y_{\min} &\le Y(\vect{r}_q,\vect{u}_p)\le Y_{\max},\qquad q\in\{1,2\},\ p\in\{c,r\},\\
+ \text{recipe constraints} &\quad \text{are satisfied},\\
+ \text{lighting constraints} &\quad \text{are satisfied}.
+\end{align}
+Here $\Delta_N$ denotes the $N$-simplex of nonnegative paint weights summing to one.
+
+A practical candidate-discovery workflow may use a two-stage procedure:
+\begin{enumerate}
+  \item Generate physically plausible candidate recipe pairs using sparse mixture grids or random sampling.
+  \item For each pair, optimise or grid-search $\vect{u}_c$ and $\vect{u}_r$ to identify conceal and reveal lighting states.
+\end{enumerate}
+This is likely more tractable than attempting a single global optimisation from the outset.
+
+\section{Recipe constraints}
+
+Studio usefulness requires constraints that are not visible in the pure spectral equations. Examples include
+\begin{align}
+ \|\vect{w}\|_0 &\le K_{\max}, \label{eq:sparsity_constraint}\\
+ w_j &\ge w_{\min}\quad \text{for all included pigments}, \label{eq:min_weight}\\
+ \bar{r} &= \frac{1}{n}\sum_{k=1}^{n}r_k \ge r_{\min}, \label{eq:high_key_constraint}
+\end{align}
+where $\|\vect{w}\|_0$ is the number of nonzero pigment components. These enforce sparse, repeatable recipes and can bias the search away from muddy low-reflectance solutions.
+
+In a painting context, further constraints may include pigment availability, toxicity, opacity, drying behaviour, gloss, and suitability for the intended mark-making method. These can be represented initially as metadata filters and later as penalty terms.
+
+\section{Spectral difference and metameric strength}
+
+A large physical spectral difference is not sufficient for an artistic effect. The useful condition is that the difference is hidden by one projection and revealed by another. Nevertheless, a spectral difference metric can help rank candidates that are otherwise similar. For example,
+\begin{equation}
+ D_{\mathrm{spec}}(\vect{r}_1,\vect{r}_2)=\|\vect{r}_1-\vect{r}_2\|_2,
+\end{equation}
+or, with wavelength weights,
+\begin{equation}
+ D_{\mathrm{spec}}(\vect{r}_1,\vect{r}_2)=
+ \sqrt{\sum_{k=1}^{n}\omega_k(r_{1,k}-r_{2,k})^2}.
+\end{equation}
+A composite ranking might be
+\begin{equation}
+ J=a\DE_r-b\DE_c+cD_{\mathrm{spec}}-dP_{\mathrm{recipe}}-eP_{\mathrm{light}}-fP_{\mathrm{confidence}},
+ \label{eq:composite_score}
+\end{equation}
+where $P_{\mathrm{recipe}}$, $P_{\mathrm{light}}$, and $P_{\mathrm{confidence}}$ penalise impractical recipes, unusable lighting, and low-confidence model inputs.
+
+An alternative is lexicographic ranking:
+\begin{enumerate}
+  \item require $\DE_c<\varepsilon$;
+  \item require recipe and brightness constraints;
+  \item rank by $\DE_r$;
+  \item break ties using $D_{\mathrm{spec}}$ and practical criteria.
+\end{enumerate}
+This approach is likely more stable during early experimentation.
+
+\section{Display simulation and its limits}
+
+A monitor preview cannot reproduce the spectral phenomenon of metamerism. It can display only a trichromatic rendering of the predicted colour under a chosen illuminant, typically via sRGB conversion \citep{IEC61966}. The display module should therefore be treated as a decision aid, not as evidence that the physical effect will occur.
+
+For each candidate, the software should display:
+\begin{enumerate}
+  \item predicted colour patches for each paint under conceal and reveal lights;
+  \item reflectance spectra $\vect{r}_1$ and $\vect{r}_2$;
+  \item illuminant spectra $\vect{i}(\vect{u}_c)$ and $\vect{i}(\vect{u}_r)$;
+  \item reflected spectra $\vect{i}(\vect{u})\hadamard\vect{r}$;
+  \item $XYZ$, CIELAB, and $\DE$ metrics; and
+  \item warnings for out-of-gamut colours, low brightness, low confidence, or impractical recipes.
+\end{enumerate}
+
+\section{Measurement and model error}
+
+Let $\vect{r}_{\mathrm{model}}$ and $\vect{i}_{\mathrm{model}}$ denote the modelled reflectance and illuminant. The true physical quantities are
+\begin{align}
+ \vect{r}_{\mathrm{true}} &= \vect{r}_{\mathrm{model}}+\vect{e}_r,\\
+ \vect{i}_{\mathrm{true}} &= \vect{i}_{\mathrm{model}}+\vect{e}_i.
+\end{align}
+The tristimulus error, to first order, contains contributions
+\begin{equation}
+ \Delta\vect{t}
+ \approx
+ \mat{A}\diag(\vect{i}_{\mathrm{model}})\vect{e}_r
+ +\mat{A}\diag(\vect{r}_{\mathrm{model}})\vect{e}_i.
+ \label{eq:error_first_order}
+\end{equation}
+This decomposition shows why both paint reflectance measurement and LED spectral measurement matter. In early software work, approximate spectra are sufficient to build the pipeline. In final studio work, measured swatches and measured lighting spectra become necessary for repeatability.
+
+A calibration loop should therefore be part of the experimental method:
+\begin{enumerate}
+  \item predict a candidate recipe and lighting pair;
+  \item paint swatches under controlled conditions;
+  \item measure reflectance spectra;
+  \item compare measured spectra to predicted spectra;
+  \item update mixture models or confidence penalties;
+  \item retest under measured LED spectra.
+\end{enumerate}
+
+\section{Minimum viable mathematical engine}
+
+The first software implementation should support:
+\begin{enumerate}
+  \item a common wavelength grid;
+  \item reflectance spectra as vectors;
+  \item illuminant spectra as vectors;
+  \item LED illuminants as weighted sums of channel spectra;
+  \item colour matching functions and integration weights;
+  \item reflectance-to-$XYZ$ calculation;
+  \item $XYZ$ to CIELAB conversion;
+  \item $\DE_{00}$ or another colour-difference metric;
+  \item at least two mixture models; and
+  \item candidate scoring under conceal and reveal lights.
+\end{enumerate}
+
+The minimum useful computation is:
+\begin{equation}
+ (\vect{r}_1,\vect{r}_2,\vect{u}_c,\vect{u}_r)
+ \longmapsto
+ (\DE_c,\DE_r,J).
+\end{equation}
+The next useful computation is the search over recipe and lighting spaces.
+
+\section{Summary}
+
+The mathematical core of the project is the colourimetric projection
+\begin{equation}
+ \vect{t}=\mat{A}\diag(\vect{i})\vect{r}.
+\end{equation}
+For a fixed illuminant, metamerism is the condition
+\begin{equation}
+ \mat{A}\diag(\vect{i})(\vect{r}_1-\vect{r}_2)=\vect{0},
+\end{equation}
+or approximate equality under a perceptual colour-difference metric. Controlled LED illumination replaces the fixed illuminant by
+\begin{equation}
+ \vect{i}(\vect{u})=\mat{E}\vect{u}.
+\end{equation}
+For a fixed paint reflectance, the LED-to-colour mapping becomes
+\begin{equation}
+ \vect{t}(\vect{r},\vect{u})=\mat{A}\diag(\vect{r})\mat{E}\vect{u}=\mat{M}_{\vect{r}}\vect{u}.
+\end{equation}
+Thus the project can be understood as designing two paint reflectances and two illumination operators such that the spectral difference is suppressed under one projection and amplified under another.
+
+In artistic terms, the work is not simply a painted surface illuminated by LEDs. It is a designed interaction between material spectra, programmable illumination, and human visual projection.
+
+\appendix
+
+\section{Implementation notes}
+
+\subsection{Wavelength grid}
+
+A practical starting grid is $400$--$700$ nm at $10$ nm spacing if using the Golden Paint Spectra data directly, because that dataset provides point samples from $400$ to $700$ nm and $K/S$ values for Kubelka--Munk mixing \citep{GoldenSpectra}. For more general colourimetric work, $380$--$780$ nm at $5$ nm or $1$ nm spacing is preferable. Resampling should be explicit and recorded in metadata.
+
+\subsection{Normalisation}
+
+For object-colour calculations, the illuminant should be normalised consistently. If comparing colours under different illuminants, it is important to decide whether the comparison preserves absolute luminance, normalises each illuminant to a common white, or simulates visual adaptation. These choices change the meaning of $\DE_c$ and $\DE_r$.
+
+\subsection{Initial LED models}
+
+For early computation, RGB LED channels can be approximated as Gaussian spectral power distributions with centre wavelengths and full-width half-maxima derived from datasheets. This is sufficient for architecture and qualitative exploration, but not for final optimisation. Measured LED spectra should replace approximate models as soon as physical testing becomes serious.
+
+\subsection{Data provenance}
+
+Every spectrum should carry provenance fields: source, instrument if known, measurement geometry, wavelength grid, date, substrate, paint thickness, medium, and confidence level. This is especially important because apparent precision in spectral computation can hide weak assumptions in the data.
+
+\printbibliography
+
+\end{document}
