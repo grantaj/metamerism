@@ -18,6 +18,8 @@ The project combines:
 
 The software is not intended to replace studio experimentation. Its purpose is to guide experimentation by narrowing the search space and identifying promising paint–light candidates.
 
+The software is also intended to be a high-quality open-source contribution: well-tested, well-documented, and structured for extension by others working at the intersection of colour science and generative/programmable art practice.
+
 ---
 
 ## 2. Core Concept
@@ -65,149 +67,253 @@ The project is guided by the following questions:
 
 ## 4. System Overview
 
-The software will consist of several separable modules.
+The software consists of several separable modules arranged in a strict dependency hierarchy. The hierarchy is enforced by the package structure: lower layers have no knowledge of higher ones.
 
 ```text
-1. Spectral data module
-2. Pigment database module
-3. LED illuminant module
-4. Paint mixture prediction module
-5. Colour/perception module
-6. Metamer search module
-7. Visualisation/simulation module
-8. Empirical calibration module
-9. Studio workflow/export module
+core/           ← no internal dependencies; foundation for everything
+colorimetry/    ← depends on core only
+illuminants/    ← depends on core only
+pigments/       ← depends on core only
+mixing/         ← depends on core, pigments
+search/         ← depends on all of the above
+io/             ← depends on core, search (candidates)
 ```
 
-Each module should be replaceable or improvable without breaking the rest of the system.
+The most important architectural principle is that all colour calculations are spectral-first. RGB values are outputs for preview only, never the internal representation.
 
-The most important architectural principle is that all colour calculations should be spectral first. RGB values should be outputs for preview only, not the internal representation.
+Visualisation and user interface code lives outside the importable library (in `notebooks/` or a separate `app/` directory) and is not a package module. This keeps the scientific core dependency-free from display libraries.
 
 ---
 
-## 5. Module 1 — Spectral Data Infrastructure
+## 5. Canonical Wavelength Grid
+
+All spectral data in the package is represented on a single canonical internal grid:
+
+```text
+Range:   380–780 nm
+Spacing: 5 nm
+Points:  81
+```
+
+This grid is chosen to match CIE standard observer tables exactly. It is defined in `core/spectrum.py` as `CANONICAL_GRID`.
+
+All data from other grids (e.g. GOLDEN 400–700 nm at 10 nm) is resampled onto `CANONICAL_GRID` on ingestion. Resampling is always explicit, never silent. The interpolation method and any extrapolation applied are recorded in the `Provenance` attached to the resulting `Spectrum`.
+
+Default interpolation methods by domain:
+
+```text
+REFLECTANCE:    PCHIP  (monotone, avoids overshoot)
+TRANSMITTANCE:  PCHIP
+ILLUMINANT:     linear (conservative for power distributions)
+CMF:            linear
+EMISSION:       linear
+```
+
+Default extrapolation policies by domain:
+
+```text
+REFLECTANCE:    CLAMP  (repeat boundary value)
+TRANSMITTANCE:  CLAMP
+ILLUMINANT:     ZERO   (no emission outside measured range)
+CMF:            ZERO
+EMISSION:       ZERO
+```
+
+---
+
+## 6. Module 1 — Core Layer (`core/`)
 
 ### Purpose
 
-Provide common handling of wavelength-indexed spectral data.
+Provide the foundational types used by all other modules. This layer has no dependencies on anything else in the package.
 
-### Responsibilities
+### `spectrum.py` — The `Spectrum` type
 
-- Define a standard wavelength grid, probably 380–730 nm or 380–780 nm.
-- Resample all spectra onto the common grid.
-- Load spectral data from CSV or similar formats.
-- Interpolate missing values.
-- Normalise spectra where appropriate.
-- Store metadata and confidence levels.
-
-### Data types
-
-```text
-Reflectance spectrum: R(λ), usually 0–1
-Illuminant spectrum: I(λ), arbitrary relative power
-Cone fundamentals or colour matching functions
-LED channel spectra
-Measured swatch spectra
-```
-
-### Initial implementation
-
-Use NumPy arrays and simple CSV input/output.
-
-Example internal form:
+The `Spectrum` is the central value type of the entire package. It is an immutable frozen dataclass.
 
 ```python
-wavelength_nm: np.ndarray
-values: np.ndarray
+@dataclass(frozen=True)
+class Spectrum:
+    wavelengths: NDArray[np.float64]   # monotonically increasing, nm
+    values:      NDArray[np.float64]   # sampled spectral values
+    domain:      SpectrumDomain        # physical meaning of values
+    provenance:  Provenance            # origin and processing history
 ```
 
-Later this can be wrapped in richer classes.
+**Domains** (`SpectrumDomain` enum):
+
+```text
+REFLECTANCE    — values in [0, 1]
+ILLUMINANT     — values >= 0, arbitrary scale
+CMF            — colour matching function values
+EMISSION       — emitted power, values >= 0
+TRANSMITTANCE  — values in [0, 1]
+UNKNOWN        — no range constraint
+```
+
+**Construction** is via `Spectrum.from_arrays(wavelengths, values, domain=..., provenance=...)`, which validates inputs and domain constraints. Pass `validate=False` to skip range checks when constructing intermediate results.
+
+**Operations** return new `Spectrum` objects; no method mutates the receiver:
+
+```text
+resample(target_grid)    — interpolate onto a new wavelength grid
+to_canonical()           — convenience: resample onto CANONICAL_GRID
+normalise(to=1.0)        — scale so peak value equals `to`
+clip(low, high)          — clamp values to [low, high]
+integrate()              — trapezoidal integration: ∫ values dλ
+dot(other)               — inner product: ∫ self * other dλ
+* / + -                  — pointwise arithmetic (grids must match)
+allclose(other)          — numerical equality with tolerance
+```
+
+All arithmetic operators raise `GridMismatchError` if grids differ. Call `resample()` or `to_canonical()` first.
+
+**`Provenance`** records origin and processing history:
+
+```python
+@dataclass(frozen=True)
+class Provenance:
+    source:               str         # human-readable origin description
+    instrument:           str | None  # e.g. "X-Rite i1Pro 3"
+    measurement_geometry: str | None  # e.g. "45°/0°"
+    illuminant_used:      str | None  # e.g. "D65"
+    substrate:            str | None
+    medium:               str | None
+    film_thickness_um:    float | None
+    confidence:           float       # 0–1; 1.0 = directly measured
+    notes:                str | None  # resampling history, warnings
+```
+
+Confidence convention:
+
+```text
+1.0  — directly measured under controlled conditions
+0.7  — manufacturer or reference data, assumed reliable
+0.4  — approximated (Gaussian LED model, extrapolated values)
+0.1  — rough guess or placeholder
+```
+
+### `observer.py` — The `Observer` type
+
+The observer (colour matching functions) is an explicit parameter in all colorimetric calculations. It is never a hidden global.
+
+```python
+@dataclass(frozen=True)
+class Observer:
+    name:                 str                  # e.g. "CIE1931_2deg"
+    cmf:                  NDArray[np.float64]  # shape (81, 3) on CANONICAL_GRID
+    integration_weights:  NDArray[np.float64]  # shape (81,), nm spacing
+```
+
+Standard observers to be provided:
+
+```text
+CIE 1931 2-degree   — default; matches most published ΔE formulae
+CIE 2006 2-degree   — more physiologically accurate
+CIE 2006 10-degree  — appropriate for paintings viewed at normal distance
+```
+
+The choice of observer is a genuine scientific decision with artistic implications. The 10° observer is more relevant for paintings viewed from typical gallery distances.
+
+### `exceptions.py` — Package exceptions
+
+All package exceptions are defined in one place and imported from here:
+
+```text
+SpectrumError        — base class
+GridMismatchError    — operation requires matching grids
+ExtrapolationError   — extrapolation required under RAISE policy
+DomainError          — domain-specific constraint violated
+```
 
 ---
 
-## 6. Module 2 — Pigment Database
+## 7. Module 2 — Colorimetry (`colorimetry/`)
 
 ### Purpose
 
-Store and access spectral reflectance curves for artist pigments and paints.
+Compute perceived colour from spectral data. Depends on `core/` only.
 
-### Initial data source
-
-The first useful source is the available spectral data for GOLDEN Heavy Body acrylic pigments. These can be used as a starting pigment library for simulation and candidate generation.
-
-### Data model
-
-Each pigment entry should include:
+### `tristimulus.py`
 
 ```text
-paint brand
-paint range
-pigment name
-pigment code, e.g. PO20, PY35, PR108
-reflectance spectrum
-opacity / transparency if known
-colour index name if available
-metadata source
-confidence level
+xyz(reflectance, illuminant, observer) → XYZ
 ```
 
-### Important distinction
+Computes tristimulus values by integrating `I(λ) · R(λ) · CMF(λ)` over the canonical grid using the trapezoidal rule.
 
-The database should distinguish between:
+The observer is always passed explicitly. The canonical integration is:
 
 ```text
-single-pigment paints
-multi-pigment commercial paints
-measured physical swatches
-computed mixtures
+X = ∫ I(λ) R(λ) x̄(λ) dλ
+Y = ∫ I(λ) R(λ) ȳ(λ) dλ
+Z = ∫ I(λ) R(λ) z̄(λ) dλ
 ```
 
-This is important because artist paint names can conceal complex pigment formulations.
+### `spaces.py`
+
+Colour space conversions:
+
+```text
+xyz_to_lab(XYZ, whitepoint)  → Lab
+lab_to_lch(Lab)              → LCh
+xyz_to_oklab(XYZ)            → OKLab
+xyz_to_srgb(XYZ)             → sRGB  (preview only)
+```
+
+### `difference.py`
+
+Colour difference metrics:
+
+```text
+delta_e_76(Lab_a, Lab_b)     → float
+delta_e_00(Lab_a, Lab_b)     → float
+spectral_distance(r_a, r_b)  → float  (RMS spectral difference)
+```
+
+### Note on chromatic adaptation
+
+Under RGBW illumination that differs significantly from D65, von Kries or CIECAM02 adaptation should be applied before computing ΔE, or the visual system's adaptation to the illuminant will be ignored and colour differences will be overestimated. This is particularly important for the conceal condition, where a coloured illuminant is partially adapted out.
+
+Chromatic adaptation is a known limitation in v1. The normalisation policy (per-illuminant normalisation simulates a fully adapted observer; preserving absolute luminance does not) must be documented as an explicit parameter with a named default, not an implicit assumption.
+
+### Dependency
+
+Use the `colour-science` library for standard colorimetric conversions (ΔE00, XYZ→Lab, D65/D50 whitepoints, standard observers) rather than implementing these from scratch. This reduces the risk of numerical errors in well-specified calculations. The novel contributions of this project are the mixture models and search logic, not the standard colorimetry.
 
 ---
 
-## 7. Module 3 — LED Illumination Model
+## 8. Module 3 — Illuminants (`illuminants/`)
 
 ### Purpose
 
-Represent programmable LED illumination as spectral power distributions.
+Represent programmable and standard illuminants as spectral power distributions. Depends on `core/` only.
 
-For RGB LEDs:
+### `standard.py`
 
-```text
-I(λ) = rR(λ) + gG(λ) + bB(λ)
-```
-
-For RGBW LEDs:
+Standard reference illuminants loaded from `data/illuminants/`:
 
 ```text
-I(λ) = rR(λ) + gG(λ) + bB(λ) + wW(λ)
+D65   — CIE standard daylight (6500 K)
+D50   — CIE standard daylight (5000 K)
+A     — incandescent
 ```
 
-For a general multi-channel illuminant:
+### `led.py`
+
+LED channel models. A general multi-channel illuminant:
 
 ```text
 I(λ) = c₁E₁(λ) + c₂E₂(λ) + ... + cₙEₙ(λ)
 ```
 
-### Initial light sources
-
-The first lighting models should include:
+For RGBW:
 
 ```text
-WS2812B / NeoPixel RGB approximation
-SK6812 RGBW approximation
-generic RGB LED model
-generic RGB + warm white model
-D65 daylight reference
-D50 reference
-warm white LED approximation
-cool white LED approximation
+I(λ) = r·R(λ) + g·G(λ) + b·B(λ) + w·W(λ)
 ```
 
-### NeoPixel approximation
-
-For early software work, each channel can be approximated by a Gaussian or asymmetric Gaussian:
+Initial Gaussian approximations for WS2812B / NeoPixel:
 
 ```text
 Red:   centre ~625 nm, FWHM ~20 nm
@@ -215,279 +321,198 @@ Green: centre ~525 nm, FWHM ~30 nm
 Blue:  centre ~467 nm, FWHM ~20 nm
 ```
 
-This is not final scientific data. It is a placeholder model that allows the architecture and search algorithms to be developed before measured LED spectra are available.
+These are placeholders only. The architecture should be developed against them before measured LED spectra are available. Confidence is set to 0.4 for Gaussian models.
+
+### `measured.py`
+
+Loader for measured LED spectra (from spectroradiometer CSV export).
 
 ### Preferred early hardware
 
-The most useful readily available upgrade from standard NeoPixel RGB is likely SK6812 RGBW, because the additional white channel provides a broader phosphor component as well as narrow RGB channels.
-
-For experimentation:
-
-```text
-SK6812 RGBW strip
-ESP32 or Arduino controller
-stable 5 V power supply
-diffuser
-small enclosed test box or controlled lighting rig
-```
+SK6812 RGBW is the recommended early upgrade from standard NeoPixel RGB. The additional white channel provides a phosphor component spanning the visible range alongside the narrow RGB channels, significantly expanding the accessible null space for the conceal search.
 
 ---
 
-## 8. Module 4 — Paint Mixture Prediction
+## 9. Module 4 — Pigments (`pigments/`)
 
 ### Purpose
 
-Predict the reflectance spectrum of paint mixtures from component paint spectra.
+Store and query spectral reflectance data for artist pigments. Depends on `core/` only.
 
-This is the most uncertain part of the modelling.
+### `database.py`
 
-### Initial mixture models
-
-The software should support several mixture models.
-
-#### 1. Linear reflectance mixing
-
-```text
-R_mix(λ) = aR₁(λ) + bR₂(λ) + ...
+```python
+@dataclass(frozen=True)
+class PigmentEntry:
+    brand:           str          # e.g. "Golden"
+    range_:          str          # e.g. "Heavy Body"
+    name:            str          # e.g. "Cadmium Red Medium Hue"
+    pigment_codes:   list[str]    # e.g. ["PR108"]
+    reflectance:     Spectrum     # on CANONICAL_GRID
+    opacity:         str | None   # "opaque", "semi-transparent", "transparent"
+    colour_index:    str | None
+    entry_type:      PigmentEntryType
+    provenance:      Provenance
 ```
 
-This is physically weak but useful as a baseline.
-
-#### 2. Log-reflectance mixing
+`PigmentEntryType` enum:
 
 ```text
-log R_mix(λ) = a log R₁(λ) + b log R₂(λ) + ...
+SINGLE_PIGMENT     — single-pigment paint
+MULTI_PIGMENT      — commercial multi-pigment formulation
+MEASURED_SWATCH    — measured physical swatch
+COMPUTED_MIXTURE   — result of mixture model
 ```
 
-This better approximates subtractive behaviour because absorption compounds multiplicatively.
+This distinction is important because artist paint names can conceal complex pigment formulations. Single-pigment paints are preferred for mixture modelling.
 
-#### 3. Kubelka–Munk-inspired mixing
+### `loaders.py`
 
-Use a simplified opaque-paint model based on K/S values, where possible.
+CSV ingestion for GOLDEN Heavy Body spectral data. Resamples all loaded spectra onto `CANONICAL_GRID` and records resampling parameters in `Provenance`.
 
-For opaque layers:
+---
+
+## 10. Module 5 — Mixture Models (`mixing/`)
+
+### Purpose
+
+Predict the reflectance spectrum of a paint mixture from component spectra. Depends on `core/` and `pigments/`.
+
+### Protocol
+
+All mixture models implement a common protocol:
+
+```python
+class MixtureModel(Protocol):
+    name:             str
+    accuracy_regime:  str   # e.g. "opaque films", "transparent washes"
+
+    def predict(
+        self,
+        components: list[tuple[Spectrum, float]],  # (pigment_reflectance, weight)
+    ) -> MixturePrediction: ...
+
+@dataclass(frozen=True)
+class MixturePrediction:
+    reflectance:          Spectrum
+    confidence:           float           # 0–1
+    uncertainty_spectrum: NDArray | None  # per-wavelength std dev
+    model_name:           str
+    warnings:             list[str]
+```
+
+The `confidence` and `uncertainty_spectrum` fields are not optional decoration — they propagate into search scoring and candidate ranking.
+
+### Implementations
+
+**`linear.py`** — linear reflectance mixing:
 
 ```text
-K/S = (1 - R)² / (2R)
+R_mix(λ) = Σ wᵢ Rᵢ(λ)
 ```
 
-Mixtures can then be approximated in K/S space.
+Physically weak; useful as a baseline. High confidence only at very low pigment concentrations.
 
-This will likely become more important once measured swatch data is available.
+**`log_reflectance.py`** — log-reflectance mixing:
+
+```text
+log R_mix(λ) = Σ wᵢ log Rᵢ(λ)
+```
+
+Better approximates subtractive behaviour. Absorption compounds multiplicatively.
+
+**`kubelka_munk.py`** — Kubelka–Munk mixing in K/S space:
+
+```text
+K/S = (1 − R)² / (2R)
+K/S_mix = Σ wᵢ (K/S)ᵢ
+```
+
+Valid only for opaque films at full coverage. The two-flux model is required for transparent or layered applications. The single-constant model (implemented first) must carry a warning for transparent pigments.
 
 ### Important caveat
 
-Real paint mixing depends on:
-
-```text
-pigment concentration
-medium
-film thickness
-substrate
-opacity
-scattering
-surface gloss
-application method
-drying behaviour
-```
-
-The model should therefore be treated as a candidate generator, not as an exact predictor.
+All mixture models are candidate generators, not exact predictors. Real paint mixing is affected by pigment concentration, medium, film thickness, substrate, opacity, scattering, gloss, application method, and drying behaviour. The pluggable design allows the model to be replaced or improved without touching search logic.
 
 ---
 
-## 9. Module 5 — Colour and Perception Calculation
+## 11. Module 6 — Metameric Search (`search/`)
 
 ### Purpose
 
-Compute perceived colour from a reflectance spectrum under a given illuminant.
+Find pairs of paint mixtures metameric under one illuminant and divergent under another, together with optimal illumination states for both conditions. Depends on all layers above.
 
-### Calculation pipeline
+### Two-level search architecture
 
-Given:
+The search operates at two levels with very different computational costs.
+
+**Level 1 — Paint search (expensive, combinatorial)**
+
+Enumerate candidate paint pairs. For each pair, invoke the Level 2 search to find the optimal lighting states. Score the result.
+
+**Level 2 — Light search (cheap, linear algebra)**
+
+For a fixed paint pair A and B, the response difference under LED state `u` is:
 
 ```text
-paint reflectance R(λ)
-illuminant I(λ)
-colour matching functions x̄(λ), ȳ(λ), z̄(λ)
+c_A − c_B = (M_A − M_B) u
 ```
 
-Compute:
+where `M_A`, `M_B` are matrices mapping LED channel values to cone responses.
+
+The conceal light solves:
 
 ```text
-X = ∫ I(λ) R(λ) x̄(λ) dλ
-Y = ∫ I(λ) R(λ) ȳ(λ) dλ
-Z = ∫ I(λ) R(λ) z̄(λ) dλ
+(M_A − M_B) u ≈ 0   →   null space of (M_A − M_B)
 ```
 
-Then convert to:
+The reveal light maximises:
 
 ```text
-XYZ
-Lab
-LCh
-sRGB preview
-possibly OKLab
-possibly CAM16 later
+‖(M_A − M_B) u‖   →   leading eigenvector of (M_A − M_B)ᵀ(M_A − M_B)
 ```
 
-### Difference metrics
+Both are closed-form solutions. Level 2 is the inner loop; it is essentially free once `M_A` and `M_B` are computed. The scoring function for LED states is therefore exact (for fixed paints), not approximate.
 
-At minimum:
+### `paint_search.py`
+
+Combinatorial enumeration of paint pairs. Initial strategies:
 
 ```text
-ΔE76
-ΔE00
-spectral distance
-LMS difference
-brightness / luminance difference
+grid search over two-pigment mixtures (main early approach)
+random search over three-pigment mixtures
+Bayesian optimisation (later)
 ```
 
-### Role in the project
+### `light_search.py`
 
-This module should be implemented early and carefully. Unlike mixture modelling, this part is relatively standard and reliable.
+Linear algebra LED search as described above. Applies brightness and channel constraint projections after finding the null space / leading eigenvector.
 
----
+### `scoring.py`
 
-## 10. Module 6 — Metameric Search
-
-### Purpose
-
-Find pairs of paint mixtures that are visually similar under one illuminant and different under another.
-
-### Basic search target
-
-For two candidate paint mixtures A and B:
+Composite score for a candidate:
 
 ```text
-conceal_error = ΔE(A, B under light_1)
-reveal_difference = ΔE(A, B under light_2)
-```
-
-A strong candidate has:
-
-```text
-conceal_error small
-reveal_difference large
-```
-
-### Candidate scoring
-
-A simple score might be:
-
-```text
-score = reveal_difference / (conceal_error + ε)
+J = ΔE_reveal / (ΔE_conceal + ε)
 ```
 
 With penalties for:
 
 ```text
-too dark
-too low chroma
-too low brightness
-unpleasant or impractical illumination
-too many pigments in mixture
-tiny unstable mixture ratios
-poor predicted physical robustness
-out-of-gamut preview
+too dark or too low chroma under conceal light
+too dark or too low chroma under reveal light
+too many pigments in recipe
+tiny or unstable mixture ratios
+low mixture model confidence
+out-of-gamut sRGB preview
+unpleasant or impractical illumination state
 ```
 
-### Search variables
+Lexicographic ranking: candidates with `ΔE_conceal > threshold` are rejected before ranking by `J`.
 
-The search can operate over:
+### `candidates.py`
 
-```text
-paint mixture A recipe
-paint mixture B recipe
-lighting state 1
-lighting state 2
-```
-
-For RGBW lighting:
-
-```text
-light_1 = [r1, g1, b1, w1]
-light_2 = [r2, g2, b2, w2]
-```
-
-### Constraint examples
-
-```text
-ΔE_conceal < 2.0
-ΔE_reveal > 10.0
-Y_conceal within acceptable brightness range
-Y_reveal within acceptable brightness range
-maximum 2 or 3 pigments per mixture
-minimum reflectance / high-key constraint
-similar value under conceal light
-```
-
-### Search strategies
-
-Begin with simple brute force and random search.
-
-Then add:
-
-```text
-grid search over two-pigment mixtures
-random search over three-pigment mixtures
-Bayesian optimisation
-genetic algorithms
-linear algebra screening for LED states
-constrained numerical optimisation
-```
-
-The first goal is not elegance. The first goal is to find physically testable candidates.
-
----
-
-## 11. Linear Algebra Insight for LED Search
-
-For a fixed paint reflectance and fixed LED channel spectra, cone response is approximately linear in LED drive values.
-
-For one paint:
-
-```text
-c = M_P u
-```
-
-where:
-
-```text
-c = [L, M, S]ᵀ
-u = [r, g, b]ᵀ
-```
-
-For two paints A and B:
-
-```text
-c_A - c_B = (M_A - M_B)u
-```
-
-This gives a useful method for searching lighting states.
-
-The conceal light should satisfy:
-
-```text
-(M_A - M_B)u ≈ 0
-```
-
-The reveal light should maximise:
-
-```text
-||(M_A - M_B)u||
-```
-
-subject to practical constraints:
-
-```text
-0 ≤ channel values ≤ 1
-brightness sufficient
-not too saturated unless desired
-does not exceed LED current limits
-does not cause flicker or thermal instability
-```
-
-This suggests that the software should search not just for metameric paint pairs, but for paint pairs with useful controllable light-response differences.
+`CandidatePair` dataclass and JSON serialisation. All candidates are saved with full provenance.
 
 ---
 
@@ -497,15 +522,14 @@ This suggests that the software should search not just for metameric paint pairs
 
 Provide visual feedback for candidate pairs and lighting states.
 
+### Scope
+
+Visualisation code lives **outside the importable library** — in `notebooks/` or a separate `app/` directory. This avoids dragging display dependencies (matplotlib, streamlit, etc.) into the scientific core.
+
 ### Core views
 
-The interface should show:
-
 ```text
-paint A under conceal light
-paint B under conceal light
-paint A under reveal light
-paint B under reveal light
+paint A and B under conceal and reveal light (colour swatches)
 reflectance curves of A and B
 illumination spectra for light 1 and light 2
 resulting reflected spectra
@@ -517,21 +541,7 @@ confidence warnings
 
 ### Important limitation
 
-The screen cannot display the true spectral phenomenon. It can only show the predicted colour appearance under each modelled illuminant.
-
-The display is therefore a decision aid, not the artwork itself.
-
-### Useful interface modes
-
-```text
-candidate browser
-side-by-side comparison
-illumination slider
-RGB/RGBW control panel
-reflectance curve plot
-ranking table
-exportable swatch recipe sheet
-```
+The screen cannot display the true spectral phenomenon. It can only show predicted colour appearance under each modelled illuminant. The display is a decision aid, not the artwork.
 
 ---
 
@@ -543,44 +553,12 @@ Close the loop between predicted and actual behaviour.
 
 ### Measurements needed
 
-Eventually the project needs measured spectra for:
-
 ```text
 actual paint swatches
 actual paint mixtures
 actual LED channels
 actual mixed lighting states
 possibly substrates and varnishes
-```
-
-### Reflectance measurements
-
-For each painted swatch:
-
-```text
-paint recipe
-substrate
-ground
-application method
-film thickness if known
-medium
-drying time
-measured reflectance spectrum
-lighting/viewing geometry
-instrument settings
-```
-
-### LED measurements
-
-For each light source:
-
-```text
-red channel spectrum
-green channel spectrum
-blue channel spectrum
-white channel spectrum if present
-mixed states for validation
-channel response vs drive value
 ```
 
 ### Calibration loop
@@ -598,25 +576,253 @@ paint next candidates
 
 ### When spectrophotometer data becomes critical
 
-A spectrophotometer is not critical for the first software prototype.
-
-It becomes critical when the project moves from:
-
-```text
-candidate discovery
-```
-
-to:
-
-```text
-reliable physical production
-```
-
-The key failure point is mixture prediction. Public pigment reflectance data may suggest promising candidates, but actual painted mixtures will vary with medium, thickness, surface, substrate, and application.
+A spectrophotometer is not critical for the first software prototype. It becomes critical when the project moves from candidate discovery to reliable physical production. The key failure point is mixture prediction.
 
 ---
 
-## 14. Physical Experiment Program
+## 14. Module 9 — I/O (`io/`)
+
+### Purpose
+
+Import and export data at the boundaries of the library. Depends on `core/` and `search/` (for candidate types).
+
+### `export.py`
+
+```text
+candidate report (PDF or HTML)
+recipe sheet (CSV)
+reflectance curve export
+illumination state export
+```
+
+### `spectrophotometer.py`
+
+Ingest measured swatch spectra from spectrophotometer export formats. Resamples onto `CANONICAL_GRID` and attaches instrument provenance.
+
+---
+
+## 15. Repository Structure
+
+```text
+metamerism/
+│
+├── pyproject.toml
+├── README.md
+├── .python-version
+├── .gitignore
+│
+├── src/
+│   └── metamerism/
+│       ├── __init__.py
+│       │
+│       ├── core/                        # no internal dependencies
+│       │   ├── __init__.py
+│       │   ├── spectrum.py              # Spectrum, Provenance, CANONICAL_GRID ✓
+│       │   ├── observer.py              # Observer, CMF loading
+│       │   └── exceptions.py            # all package exceptions
+│       │
+│       ├── colorimetry/                 # depends on core only
+│       │   ├── __init__.py
+│       │   ├── tristimulus.py
+│       │   ├── spaces.py
+│       │   └── difference.py
+│       │
+│       ├── illuminants/                 # depends on core only
+│       │   ├── __init__.py
+│       │   ├── standard.py
+│       │   ├── led.py
+│       │   └── measured.py
+│       │
+│       ├── pigments/                    # depends on core only
+│       │   ├── __init__.py
+│       │   ├── database.py
+│       │   └── loaders.py
+│       │
+│       ├── mixing/                      # depends on core, pigments
+│       │   ├── __init__.py
+│       │   ├── base.py                  # MixtureModel protocol, MixturePrediction
+│       │   ├── linear.py
+│       │   ├── log_reflectance.py
+│       │   └── kubelka_munk.py
+│       │
+│       ├── search/                      # depends on everything above
+│       │   ├── __init__.py
+│       │   ├── candidates.py
+│       │   ├── paint_search.py
+│       │   ├── light_search.py
+│       │   └── scoring.py
+│       │
+│       └── io/                          # depends on core, search
+│           ├── __init__.py
+│           ├── export.py
+│           └── spectrophotometer.py
+│
+├── data/
+│   ├── observers/                       # CIE 1931, CIE 2006 CMF tables (CSV)
+│   ├── illuminants/                     # D65, D50, A spectral data (CSV)
+│   ├── pigments/                        # Golden et al. reflectance data (CSV)
+│   └── examples/                        # example candidate JSON files
+│
+├── tests/
+│   ├── core/
+│   │   └── test_spectrum.py             # ✓ 68 tests passing
+│   ├── colorimetry/
+│   ├── illuminants/
+│   ├── pigments/
+│   ├── mixing/
+│   ├── search/
+│   └── io/
+│
+├── notebooks/                           # exploratory Jupyter work
+│
+└── docs/
+```
+
+`✓` marks files that have been implemented.
+
+---
+
+## 16. Technology Choices
+
+### Language and runtime
+
+```text
+Python 3.12+
+```
+
+### Core dependencies
+
+```text
+numpy >= 2.0          — spectral arrays, linear algebra
+scipy >= 1.14         — interpolation (PCHIP), optimisation
+colour-science        — standard colorimetry (ΔE00, observers, whitepoints)
+pandas                — tabular data, pigment database queries
+matplotlib            — plots (notebooks and app only, not core library)
+```
+
+### Development tools
+
+```text
+uv                    — package and environment management
+pytest >= 8.0         — test runner
+ruff                  — linting and formatting
+ty                    — type checking
+```
+
+### Build
+
+```text
+hatchling             — build backend
+src layout            — src/metamerism/
+```
+
+### JSON serialisation (candidates)
+
+Pydantic v2 is suitable for the candidate data model and spectrophotometer ingest. `Provenance` maps directly to a Pydantic model. `Spectrum` itself should not be a Pydantic model; use custom serialisation for the numpy array fields. All candidate JSON includes a `schema_version` field from the first version.
+
+---
+
+## 17. Testing Strategy
+
+Colour science code is susceptible to subtle numerical bugs that produce plausible-looking wrong answers. The test suite is structured around known ground truths.
+
+### Test categories
+
+**Round-trip tests** (core correctness):
+
+```text
+resample to canonical and back; verify values within tolerance
+XYZ of perfect white diffuser under D65: Y = 100.00 (CIE standard)
+```
+
+**Synthetic metamer identity tests**:
+
+```text
+construct two artificial reflectance spectra analytically metameric
+under a known illuminant; verify ΔE_conceal ≈ 0
+```
+
+**Null-space tests**:
+
+```text
+construct M_A, M_B for synthetic paint pair
+run light_search; verify conceal light produces ΔE ≈ 0
+```
+
+**Mixture model regression tests**:
+
+```text
+fix known pigment spectra and weights
+verify predictions do not drift across refactors
+```
+
+**Domain validation tests**:
+
+```text
+reflectance and transmittance values in [0, 1]
+illuminant and emission values >= 0
+```
+
+Writing the synthetic metamer tests before implementing search is the single highest-leverage investment for quality. Tests catch grid mismatch errors, normalisation inconsistencies, and mixture model overconfidence early.
+
+### Current test status
+
+```text
+tests/core/test_spectrum.py    — 68 tests, all passing
+```
+
+---
+
+## 18. Candidate Data Model
+
+A candidate metameric pair is saved with all necessary metadata. The `schema_version` field is mandatory from v1 to support future migrations.
+
+```json
+{
+  "schema_version": "1.0",
+  "candidate_id": "cand_0001",
+  "paint_a": {
+    "recipe": [
+      {"pigment": "PY35", "amount": 0.7},
+      {"pigment": "PR108", "amount": 0.3}
+    ],
+    "predicted_reflectance_file": "cand_0001_A.csv",
+    "mixture_model": "kubelka_munk",
+    "mixture_confidence": 0.6
+  },
+  "paint_b": {
+    "recipe": [
+      {"pigment": "PO20", "amount": 1.0}
+    ],
+    "predicted_reflectance_file": "cand_0001_B.csv",
+    "mixture_model": "kubelka_munk",
+    "mixture_confidence": 0.7
+  },
+  "conceal_light": {
+    "source": "SK6812_RGBW_approx",
+    "channels": {"r": 0.42, "g": 0.61, "b": 0.18, "w": 0.75},
+    "search_method": "null_space"
+  },
+  "reveal_light": {
+    "source": "SK6812_RGBW_approx",
+    "channels": {"r": 1.0, "g": 0.15, "b": 0.05, "w": 0.0},
+    "search_method": "leading_eigenvector"
+  },
+  "observer": "CIE1931_2deg",
+  "chromatic_adaptation": "none_v1",
+  "metrics": {
+    "delta_e_conceal": 1.2,
+    "delta_e_reveal": 14.8,
+    "strength_ratio": 12.3
+  },
+  "status": "predicted_only",
+  "notes": "High-priority physical swatch candidate."
+}
+```
+
+---
+
+## 19. Physical Experiment Program
 
 ### Stage 1 — Software-only exploration
 
@@ -658,46 +864,19 @@ paint recipes
 subjective visibility
 ```
 
-This phase will be rough but artistically informative.
-
 ### Stage 3 — Measured LED spectra
 
-Measure the actual LED channels.
-
-Update the illumination model.
-
-Rerun search.
-
-This improves the reliability of the predicted reveal/conceal lighting states.
+Measure actual LED channels. Update the illumination model. Rerun search.
 
 ### Stage 4 — Measured paint swatches
 
-Measure single paints and mixtures.
-
-Compare predicted and measured reflectance.
-
-Improve the mixture model.
+Measure single paints and mixtures. Compare predicted and measured reflectance. Improve the mixture model.
 
 ### Stage 5 — Studio-scale panels
 
-Move from small swatches to painted panels.
-
-Investigate:
-
-```text
-surface texture
-scale
-viewing distance
-gloss
-application method
-edge conditions
-illumination uniformity
-viewer movement
-```
+Move from small swatches to painted panels. Investigate scale, viewing distance, gloss, application method, illumination uniformity.
 
 ### Stage 6 — Finished painting/installation studies
-
-Develop completed works using controlled illumination.
 
 Possible formats:
 
@@ -711,7 +890,7 @@ apparently monochrome painting that differentiates under LED states
 
 ---
 
-## 15. Hardware Plan
+## 20. Hardware Plan
 
 ### Immediate experimental hardware
 
@@ -741,7 +920,7 @@ Desirable:
 emission spectrometer or spectroradiometer for LED spectra
 ```
 
-If one instrument can handle both reflectance and emission sufficiently well, that is ideal. If not, reflectance measurement is the higher priority for paint modelling, while approximate or manufacturer LED data may suffice temporarily.
+If one instrument can handle both reflectance and emission sufficiently well, that is ideal. Reflectance measurement is the higher priority for paint modelling; approximate or manufacturer LED data may suffice temporarily.
 
 ### Gallery-scale lighting
 
@@ -757,118 +936,7 @@ diffused controlled light box
 
 ---
 
-## 16. Software Implementation Plan
-
-### Language and libraries
-
-Initial implementation in Python.
-
-Likely libraries:
-
-```text
-numpy
-scipy
-pandas
-matplotlib
-colour-science
-scikit-learn or scipy.optimize
-streamlit, tkinter, textual, or a simple desktop/web UI
-```
-
-Given prior experience with the colourshift project, a Python desktop GUI or lightweight web interface would be appropriate.
-
-### Repository structure
-
-```text
-metamerism/
-    pyproject.toml
-    README.md
-    .python-version
-    .gitignore
-
-    src/
-        metamerism/
-
-            spectra/
-            colorimetry/
-            illuminants/
-            pigments/
-            mixing/
-            search/
-
-    data/
-        pigments/
-        illuminants/
-        observers/
-        examples/
-
-    notebooks/
-
-    tests/
-
-    docs/
-        README.md
-```
-
-### First milestone code path
-
-The first working version should be able to:
-
-```text
-load two reflectance curves
-load or generate an LED illuminant
-compute XYZ/Lab/sRGB
-compute ΔE between two paints under two lights
-display the result
-```
-
-This is the minimum viable colour engine.
-
----
-
-## 17. Candidate Data Model
-
-A candidate metameric pair should be saved with all necessary metadata.
-
-Example:
-
-```json
-{
-  "candidate_id": "cand_0001",
-  "paint_a": {
-    "recipe": [
-      {"pigment": "PY35", "amount": 0.7},
-      {"pigment": "PR108", "amount": 0.3}
-    ],
-    "predicted_reflectance_file": "cand_0001_A.csv"
-  },
-  "paint_b": {
-    "recipe": [
-      {"pigment": "PO20", "amount": 1.0}
-    ],
-    "predicted_reflectance_file": "cand_0001_B.csv"
-  },
-  "conceal_light": {
-    "source": "SK6812_RGBW_approx",
-    "channels": {"r": 0.42, "g": 0.61, "b": 0.18, "w": 0.75}
-  },
-  "reveal_light": {
-    "source": "SK6812_RGBW_approx",
-    "channels": {"r": 1.0, "g": 0.15, "b": 0.05, "w": 0.0}
-  },
-  "metrics": {
-    "delta_e_conceal": 1.2,
-    "delta_e_reveal": 14.8,
-    "strength_ratio": 12.3
-  },
-  "status": "predicted_only",
-  "notes": "High-priority physical swatch candidate."
-}
-```
-
----
-
-## 18. Success Criteria
+## 21. Success Criteria
 
 ### Software success
 
@@ -878,7 +946,7 @@ The software is successful if it can:
 import pigment reflectance curves
 model RGB/RGBW illumination
 compute perceptual colour under arbitrary illumination
-search for candidate metameric pairs
+search for candidate metameric pairs using two-level paint/light search
 rank candidates meaningfully
 export recipes and lighting states
 incorporate measured swatch data later
@@ -899,11 +967,11 @@ the effect survives scale-up to painting format
 
 The artistic outcome is successful if the phenomenon is not merely a colour-science demonstration but becomes part of the conceptual and perceptual structure of the work.
 
-The painting should not simply say “this is metamerism.” It should use metamerism as a material condition: a latent image, hidden structure, unstable monochrome, or controlled perceptual event.
+The painting should not simply say "this is metamerism." It should use metamerism as a material condition: a latent image, hidden structure, unstable monochrome, or controlled perceptual event.
 
 ---
 
-## 19. Risks and Mitigations
+## 22. Risks and Mitigations
 
 ### Risk 1 — Mixture predictions are inaccurate
 
@@ -913,7 +981,8 @@ Mitigation:
 treat software as candidate generator
 test physical swatches early
 add empirical calibration
-keep mixture model pluggable
+keep mixture model pluggable via MixtureModel protocol
+expose uncertainty_spectrum per prediction
 ```
 
 ### Risk 2 — LED spectra are too approximate
@@ -921,10 +990,10 @@ keep mixture model pluggable
 Mitigation:
 
 ```text
-start with approximate models
+start with Gaussian approximations (confidence = 0.4)
 measure actual LED channels later
-allow imported LED spectra
-prefer RGBW or multi-channel fixtures
+allow imported LED spectra via measured.py
+prefer RGBW or multi-channel fixtures for wider null space
 ```
 
 ### Risk 3 — Screen simulation is misleading
@@ -932,8 +1001,8 @@ prefer RGBW or multi-channel fixtures
 Mitigation:
 
 ```text
-show spectral plots and metrics
-label previews as approximate
+show spectral plots and metrics, not just colour swatches
+label sRGB previews as approximate
 prioritise physical swatch testing
 ```
 
@@ -942,10 +1011,10 @@ prioritise physical swatch testing
 Mitigation:
 
 ```text
-add high-key constraints
+add high-key constraints to search scoring
 add chroma/value constraints
 rank candidates by artistic usefulness
-search over LED states as well as pigments
+two-level search optimises LED states for each paint pair separately
 ```
 
 ### Risk 5 — Surface effects dominate
@@ -968,99 +1037,98 @@ Mitigation:
 design lighting rig early
 test diffuser and brightness requirements
 consider DMX / theatrical fixtures for final work
-avoid solutions requiring extremely dim or unpleasant lighting
+```
+
+### Risk 7 — Chromatic adaptation not modelled
+
+Mitigation:
+
+```text
+document as known v1 limitation
+add normalisation_policy parameter (per_illuminant / absolute_luminance)
+plan CIECAM02 adaptation for v2
 ```
 
 ---
 
-## 20. Recommended Next Steps
+## 23. Implementation Sequence
 
-### Step 1 — Build the colour engine
-
-Implement:
+### Step 1 — Core layer ✓ (in progress)
 
 ```text
-spectral data loading
-standard wavelength grid
-illuminant × reflectance calculation
-XYZ/Lab/sRGB conversion
-ΔE comparison
+Spectrum type with Provenance            ✓
+CANONICAL_GRID (380–780 nm, 5 nm, 81 pt) ✓
+Resampling with interpolation/extrapolation policies ✓
+Arithmetic operators with grid mismatch guards ✓
+Full test suite (68 tests passing)       ✓
+Observer type
 ```
 
-### Step 2 — Add approximate LED models
-
-Create approximate spectral curves for:
+### Step 2 — Colorimetry
 
 ```text
-WS2812B RGB
-SK6812 RGBW
-D65
-warm white LED
-cool white LED
+XYZ integration using colour-science CMFs
+Lab, LCh, OKLab conversions
+ΔE76 and ΔE00
+round-trip test: white diffuser under D65 → Y = 100
 ```
 
-### Step 3 — Import pigment spectra
-
-Import public GOLDEN Heavy Body pigment spectra into the software.
-
-Normalise and resample them onto the standard wavelength grid.
-
-### Step 4 — Implement first mixture models
-
-Add:
+### Step 3 — Illuminants
 
 ```text
+D65, D50, A from data/
+Gaussian LED models (WS2812B, SK6812 RGBW)
+first end-to-end calculation: two paints, two lights, ΔE
+```
+
+### Step 4 — Pigments
+
+```text
+PigmentEntry dataclass
+GOLDEN Heavy Body CSV ingestion
+pigment database with query interface
+```
+
+### Step 5 — Mixture models
+
+```text
+MixtureModel protocol and MixturePrediction
 linear reflectance mixing
 log-reflectance mixing
-simple Kubelka–Munk-inspired mixing
+Kubelka–Munk (single-constant, opaque films)
+mixture regression tests
 ```
 
-### Step 5 — Build first search script
-
-Search over simple two-pigment recipes and two LED states.
-
-Initial target:
+### Step 6 — Search
 
 ```text
-ΔE_conceal < 2
-ΔE_reveal as large as possible
+light_search.py: null-space and eigenvector solutions
+paint_search.py: grid search over two-pigment pairs
+scoring.py: composite J with penalties
+synthetic metamer identity tests
+first real candidate generation run
 ```
 
-### Step 6 — Generate candidate report
-
-For each candidate, export:
+### Step 7 — Candidates and export
 
 ```text
-recipes
-predicted colour panels
-reflectance curves
-illumination spectra
-ΔE values
-lighting settings
-confidence warnings
+CandidatePair with schema_version field
+JSON serialisation (Pydantic v2)
+CSV recipe export
+reflectance and illumination curve plots (notebooks)
 ```
 
-### Step 7 — Paint first swatches
+### Step 8 — Physical swatch testing
 
-Use the highest-ranked candidates to create physical tests.
+Translate top candidates into paint recipes and test physically.
 
-Start small and systematic.
+### Step 9 — Calibration
 
-### Step 8 — Measure and calibrate
-
-Once a spectrophotometer is available, measure:
-
-```text
-single-pigment swatches
-mixture swatches
-LED channel spectra if possible
-```
-
-Then update the model.
+Incorporate measured LED and swatch spectra. Update models. Rerun search.
 
 ---
 
-## 21. Long-Term Vision
+## 24. Long-Term Vision
 
 The long-term vision is a studio research tool that allows an artist to explore colour not as fixed surface appearance, but as a relationship between material, light, and observer.
 
@@ -1074,13 +1142,15 @@ but separate under this RGBW lighting transition.
 or:
 
 ```text
-Given this measured paint surface, find the lighting state that reveals maximum contrast.
+Given this measured paint surface, find the lighting state
+that reveals maximum contrast.
 ```
 
 or:
 
 ```text
-Given these paints in my studio, search for a latent image palette for a controlled-light painting.
+Given these paints in my studio, search for a latent image palette
+for a controlled-light painting.
 ```
 
 The final artistic medium is not simply acrylic paint, nor simply LED light. It is the interaction between pigment spectra, programmable illumination, and human colour vision.
