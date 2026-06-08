@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 # Observer dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class Observer:
     """Immutable record of a standard colour observer and its CMF.
@@ -57,12 +58,13 @@ class Observer:
         Human-readable identifier for the observer.
         Examples: ``"CIE_1931_2_degree"``, ``"CIE_2006_10_degree"``.
     cmf:
-        Colour matching functions on the canonical wavelength grid (380–780 nm,
+        Colour matching functions on the canonical wavelength grid (380-780 nm,
         5 nm spacing, 81 points). Shape must be (81, 3) with columns
         corresponding to X, Y, Z tristimulus components.
     integration_weights:
         Numerical integration weights corresponding to each wavelength.
-        For uniform 5 nm spacing, this is a constant (5 nm) repeated 81 times.
+        For uniform 5 nm spacing, this uses trapezoidal endpoint weights
+        (2.5 nm at the ends, 5 nm internally).
         Shape must be (81,).
 
     Notes
@@ -85,18 +87,17 @@ class Observer:
     integration_weights: NDArray[np.float64]
     """Numerical integration weights: shape (81,).
 
-    For the canonical 5 nm grid, this is typically ``np.full(81, 5.0)``.
+    For the canonical 5 nm grid, this typically uses trapezoidal weights.
     """
 
     def __post_init__(self) -> None:
         """Validate shapes and values after construction."""
         if self.cmf.shape != (81, 3):
-            raise ValueError(
-                f"cmf must have shape (81, 3), got {self.cmf.shape}"
-            )
+            raise ValueError(f"cmf must have shape (81, 3), got {self.cmf.shape}")
         if self.integration_weights.shape != (81,):
             raise ValueError(
-                f"integration_weights must have shape (81,), got {self.integration_weights.shape}"
+                "integration_weights must have shape (81,), "
+                f"got {self.integration_weights.shape}"
             )
         if not np.all(self.integration_weights > 0):
             raise ValueError("integration_weights must be strictly positive")
@@ -105,6 +106,7 @@ class Observer:
 # ---------------------------------------------------------------------------
 # Standard observers from the colour library
 # ---------------------------------------------------------------------------
+
 
 def _load_observers() -> tuple[Observer, Observer, Observer]:
     """Load standard CIE observers from the colour library.
@@ -123,6 +125,7 @@ def _load_observers() -> tuple[Observer, Observer, Observer]:
     import colour
     import numpy as np
     from scipy.interpolate import interp1d
+
     from metamerism.core.spectrum import CANONICAL_GRID
 
     # Access the colour library's CMF database
@@ -131,21 +134,21 @@ def _load_observers() -> tuple[Observer, Observer, Observer]:
     # Select the appropriate observers
     # CIE 1931 2-degree
     cmf_1931 = cmfs_db["CIE 1931 2 Degree Standard Observer"]
-    
+
     # CIE 2015 2-degree (colour library uses 2015 instead of 2006 for 2-degree)
     cmf_2006_2 = cmfs_db["CIE 2015 2 Degree Standard Observer"]
-    
+
     # CIE 2015 10-degree (colour library uses 2015 instead of 2006 for 10-degree)
     cmf_2006_10 = cmfs_db["CIE 2015 10 Degree Standard Observer"]
 
     def resample_to_canonical(cmf_obj) -> NDArray[np.float64]:
         """Resample CMF data to the canonical wavelength grid.
-        
+
         Parameters
         ----------
         cmf_obj : colour.colorimetry.cmfs.XYZ_ColourMatchingFunctions
             CMF data from the colour library.
-        
+
         Returns
         -------
         resampled : NDArray[np.float64]
@@ -153,19 +156,20 @@ def _load_observers() -> tuple[Observer, Observer, Observer]:
         """
         wavelengths = np.asarray(cmf_obj.wavelengths)
         values = np.asarray(cmf_obj.values)  # shape (n, 3) for X, Y, Z
-        
+
         # Interpolate each of the three CMF components to the canonical grid
         resampled = np.zeros((len(CANONICAL_GRID), 3))
         for i in range(3):
             # Linear interpolation (appropriate for CMFs)
             f = interp1d(
-                wavelengths, values[:, i],
-                kind='linear',
+                wavelengths,
+                values[:, i],
+                kind="linear",
                 bounds_error=False,
                 fill_value=0.0,  # Zero outside the measured range
             )
             resampled[:, i] = f(CANONICAL_GRID)
-        
+
         return resampled
 
     # Resample all three observers to the canonical grid
@@ -173,8 +177,10 @@ def _load_observers() -> tuple[Observer, Observer, Observer]:
     cmf_2006_2_vals = resample_to_canonical(cmf_2006_2)
     cmf_2006_10_vals = resample_to_canonical(cmf_2006_10)
 
-    # Integration weights for 5 nm spacing (from 380 to 780 nm)
+    # Trapezoidal integration weights for 5 nm spacing (from 380 to 780 nm).
     weights = np.full(81, 5.0)
+    weights[0] = 2.5
+    weights[-1] = 2.5
 
     # Create Observer instances
     obs_1931 = Observer(
@@ -218,7 +224,7 @@ CIE_2006_2_DEGREE = _obs_2006_2
 #: CIE 2006 10° standard observer.
 #:
 #: Appropriate for colours viewed at larger visual angles, such as paintings
-#: viewed from typical gallery distances (typically 1–2 m away from a 1×1 m
+#: viewed from typical gallery distances (typically 1-2 m away from a 1x1 m
 #: work).
 CIE_2006_10_DEGREE = _obs_2006_10
 

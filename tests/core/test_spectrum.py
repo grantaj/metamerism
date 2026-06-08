@@ -22,11 +22,14 @@ Test categories
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
+
 import numpy as np
 import pytest
 
 from metamerism.core.spectrum import (
     CANONICAL_GRID,
+    DomainError,
     ExtrapolationError,
     ExtrapolationPolicy,
     GridMismatchError,
@@ -35,13 +38,12 @@ from metamerism.core.spectrum import (
     Spectrum,
     SpectrumDomain,
     SpectrumError,
-    DomainError,
 )
-
 
 # ============================================================================
 # Fixtures and helpers
 # ============================================================================
+
 
 def flat_spectrum(
     value: float = 0.5,
@@ -70,6 +72,7 @@ def linear_spectrum(
 # 1. CANONICAL_GRID
 # ============================================================================
 
+
 class TestCanonicalGrid:
     def test_start(self):
         assert CANONICAL_GRID[0] == pytest.approx(380.0)
@@ -94,6 +97,7 @@ class TestCanonicalGrid:
 # ============================================================================
 # 2. Provenance
 # ============================================================================
+
 
 class TestProvenance:
     def test_defaults(self):
@@ -130,13 +134,14 @@ class TestProvenance:
 
     def test_frozen(self):
         p = Provenance()
-        with pytest.raises(Exception):
-            p.confidence = 0.5  # type: ignore[misc]
+        with pytest.raises(FrozenInstanceError):
+            p.__setattr__("confidence", 0.5)
 
 
 # ============================================================================
 # 3. Spectrum.from_arrays — construction and validation
 # ============================================================================
+
 
 class TestFromArrays:
     def test_basic_construction(self):
@@ -185,28 +190,32 @@ class TestFromArrays:
     def test_reflectance_negative_raises(self):
         with pytest.raises(DomainError, match="Negative values"):
             Spectrum.from_arrays(
-                [400, 500, 600], [-0.1, 0.5, 0.5],
+                [400, 500, 600],
+                [-0.1, 0.5, 0.5],
                 domain=SpectrumDomain.REFLECTANCE,
             )
 
     def test_reflectance_above_one_raises(self):
         with pytest.raises(DomainError, match="Values exceeding 1"):
             Spectrum.from_arrays(
-                [400, 500, 600], [0.5, 1.5, 0.5],
+                [400, 500, 600],
+                [0.5, 1.5, 0.5],
                 domain=SpectrumDomain.REFLECTANCE,
             )
 
     def test_illuminant_negative_raises(self):
         with pytest.raises(DomainError, match="Negative values"):
             Spectrum.from_arrays(
-                [400, 500, 600], [1.0, -0.1, 0.5],
+                [400, 500, 600],
+                [1.0, -0.1, 0.5],
                 domain=SpectrumDomain.ILLUMINANT,
             )
 
     def test_validate_false_skips_checks(self):
         # Should not raise even with out-of-range reflectance
         s = Spectrum.from_arrays(
-            [400, 500, 600], [0.5, 1.5, 0.5],
+            [400, 500, 600],
+            [0.5, 1.5, 0.5],
             domain=SpectrumDomain.REFLECTANCE,
             validate=False,
         )
@@ -216,13 +225,14 @@ class TestFromArrays:
         # frozen=True prevents attribute reassignment; it does not make the
         # underlying numpy array read-only (arrays are mutable objects).
         s = flat_spectrum()
-        with pytest.raises(Exception):
-            s.values = np.zeros(81)
+        with pytest.raises(FrozenInstanceError):
+            s.__setattr__("values", np.zeros(81))
 
 
 # ============================================================================
 # 4. Spectrum properties
 # ============================================================================
+
 
 class TestProperties:
     def test_n_samples(self):
@@ -266,6 +276,7 @@ class TestProperties:
 # 5. Resampling
 # ============================================================================
 
+
 class TestResample:
     def test_no_op_returns_self_on_canonical(self):
         s = flat_spectrum()
@@ -301,9 +312,7 @@ class TestResample:
     def test_extrapolation_zero(self):
         """Values outside source range are zero under ZERO policy."""
         wl = np.linspace(450, 700, 26)
-        s = Spectrum.from_arrays(
-            wl, np.full(26, 0.5), domain=SpectrumDomain.ILLUMINANT
-        )
+        s = Spectrum.from_arrays(wl, np.full(26, 0.5), domain=SpectrumDomain.ILLUMINANT)
         s2 = s.resample(
             CANONICAL_GRID,
             extrapolation=ExtrapolationPolicy.ZERO,
@@ -315,9 +324,7 @@ class TestResample:
         """Values outside source range are clamped under CLAMP policy."""
         wl = np.linspace(450, 700, 26)
         values = np.linspace(0.2, 0.8, 26)
-        s = Spectrum.from_arrays(
-            wl, values, domain=SpectrumDomain.REFLECTANCE
-        )
+        s = Spectrum.from_arrays(wl, values, domain=SpectrumDomain.REFLECTANCE)
         s2 = s.resample(
             CANONICAL_GRID,
             extrapolation=ExtrapolationPolicy.CLAMP,
@@ -376,6 +383,7 @@ class TestResample:
 # ============================================================================
 # 6. Arithmetic
 # ============================================================================
+
 
 class TestArithmetic:
     def test_mul_spectrum_hadamard(self):
@@ -465,6 +473,7 @@ class TestArithmetic:
 # 7. Normalise and clip
 # ============================================================================
 
+
 class TestNormaliseAndClip:
     def test_normalise_to_one(self):
         s = flat_spectrum(0.4)
@@ -508,6 +517,7 @@ class TestNormaliseAndClip:
 # 8. Integration
 # ============================================================================
 
+
 class TestIntegration:
     def test_integrate_flat(self):
         """∫ 1.0 dλ over [380, 780] = 400."""
@@ -541,6 +551,7 @@ class TestIntegration:
 # ============================================================================
 # 9. Comparison and identity
 # ============================================================================
+
 
 class TestComparison:
     def test_allclose_identical(self):
@@ -597,6 +608,7 @@ class TestComparison:
 # 10. Domain validation (boundary conditions)
 # ============================================================================
 
+
 class TestDomainValidation:
     def test_reflectance_zero_ok(self):
         s = Spectrum.from_arrays(
@@ -626,9 +638,7 @@ class TestDomainValidation:
     def test_cmf_domain_no_range_check(self):
         """CMF domain has no strict range constraint; negative values are allowed."""
         values = np.linspace(-1.0, 3.0, 81)
-        s = Spectrum.from_arrays(
-            CANONICAL_GRID, values, domain=SpectrumDomain.CMF
-        )
+        s = Spectrum.from_arrays(CANONICAL_GRID, values, domain=SpectrumDomain.CMF)
         assert s.values[0] == pytest.approx(-1.0)
 
 
@@ -636,10 +646,11 @@ class TestDomainValidation:
 # 11. Physical correctness — synthetic metamer identity test
 # ============================================================================
 
+
 class TestSyntheticMetamerIdentity:
     """
     Two spectra that differ in shape but integrate identically under a
-    given illuminant × CMF should be confirmed as metamers by a
+    given illuminant x CMF should be confirmed as metamers by a
     colorimetric engine.  Here we verify the Spectrum primitives used
     by that engine behave correctly on a simple synthetic case.
 
@@ -657,9 +668,7 @@ class TestSyntheticMetamerIdentity:
     """
 
     def _rectangular(self, lo: float, hi: float) -> Spectrum:
-        values = np.where(
-            (CANONICAL_GRID >= lo) & (CANONICAL_GRID <= hi), 0.8, 0.1
-        )
+        values = np.where((lo <= CANONICAL_GRID) & (hi >= CANONICAL_GRID), 0.8, 0.1)
         return Spectrum.from_arrays(
             CANONICAL_GRID, values, domain=SpectrumDomain.REFLECTANCE
         )
@@ -691,7 +700,7 @@ class TestSyntheticMetamerIdentity:
         assert resp1 == pytest.approx(resp2, rel=1e-6)
 
     def test_spectra_are_physically_different(self):
-        """The two reflectances differ spectrally even if integrated response matches."""
+        """The two reflectances differ spectrally even if responses match."""
         r1 = self._rectangular(480, 580)
         r2 = self._rectangular(500, 600)
         assert not r1.allclose(r2)

@@ -51,11 +51,11 @@ if TYPE_CHECKING:
 
 #: The single authoritative wavelength grid used for all colorimetric work.
 #:
-#: * Range  : 380–780 nm  (covers the full photopic visible range)
+#: * Range  : 380-780 nm  (covers the full photopic visible range)
 #: * Spacing: 5 nm        (matches CIE standard observer tables exactly)
 #: * Points : 81
 #:
-#: Data from other grids (e.g. GOLDEN 400–700 nm at 10 nm) must be
+#: Data from other grids (e.g. GOLDEN 400-700 nm at 10 nm) must be
 #: resampled onto this grid on ingestion.  Resampling is logged via the
 #: Provenance attached to the resulting Spectrum.
 CANONICAL_GRID: NDArray[np.float64] = np.linspace(380.0, 780.0, 81)
@@ -64,6 +64,7 @@ CANONICAL_GRID: NDArray[np.float64] = np.linspace(380.0, 780.0, 81)
 # ---------------------------------------------------------------------------
 # Domain enumeration
 # ---------------------------------------------------------------------------
+
 
 class SpectrumDomain(enum.Enum):
     """Physical meaning of the sampled values.
@@ -95,6 +96,7 @@ class SpectrumDomain(enum.Enum):
 # ---------------------------------------------------------------------------
 # Provenance
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class Provenance:
@@ -137,10 +139,10 @@ class Provenance:
     confidence: float = 1.0
     """Subjective confidence in [0, 1].
 
-    * 1.0 — directly measured under controlled conditions
-    * 0.7 — manufacturer or reference data, assumed reliable
-    * 0.4 — approximated (e.g. Gaussian LED model, extrapolated values)
-    * 0.1 — very rough guess or placeholder
+    * 1.0 - directly measured under controlled conditions
+    * 0.7 - manufacturer or reference data, assumed reliable
+    * 0.4 - approximated (e.g. Gaussian LED model, extrapolated values)
+    * 0.1 - very rough guess or placeholder
 
     Colorimetric functions may propagate or warn on low confidence values.
     """
@@ -185,6 +187,7 @@ class Provenance:
 # Interpolation strategy
 # ---------------------------------------------------------------------------
 
+
 class InterpolationMethod(enum.Enum):
     """Interpolation strategy used when resampling a spectrum.
 
@@ -202,18 +205,19 @@ class InterpolationMethod(enum.Enum):
 
 
 _DEFAULT_INTERPOLATION: dict[SpectrumDomain, InterpolationMethod] = {
-    SpectrumDomain.REFLECTANCE:   InterpolationMethod.PCHIP,
-    SpectrumDomain.ILLUMINANT:    InterpolationMethod.LINEAR,
-    SpectrumDomain.CMF:           InterpolationMethod.LINEAR,
-    SpectrumDomain.EMISSION:      InterpolationMethod.LINEAR,
+    SpectrumDomain.REFLECTANCE: InterpolationMethod.PCHIP,
+    SpectrumDomain.ILLUMINANT: InterpolationMethod.LINEAR,
+    SpectrumDomain.CMF: InterpolationMethod.LINEAR,
+    SpectrumDomain.EMISSION: InterpolationMethod.LINEAR,
     SpectrumDomain.TRANSMITTANCE: InterpolationMethod.PCHIP,
-    SpectrumDomain.UNKNOWN:       InterpolationMethod.LINEAR,
+    SpectrumDomain.UNKNOWN: InterpolationMethod.LINEAR,
 }
 
 
 # ---------------------------------------------------------------------------
 # Extrapolation policy
 # ---------------------------------------------------------------------------
+
 
 class ExtrapolationPolicy(enum.Enum):
     """What to do when resampling requires values outside the source range."""
@@ -229,18 +233,19 @@ class ExtrapolationPolicy(enum.Enum):
 
 
 _DEFAULT_EXTRAPOLATION: dict[SpectrumDomain, ExtrapolationPolicy] = {
-    SpectrumDomain.REFLECTANCE:   ExtrapolationPolicy.CLAMP,
-    SpectrumDomain.ILLUMINANT:    ExtrapolationPolicy.ZERO,
-    SpectrumDomain.CMF:           ExtrapolationPolicy.ZERO,
-    SpectrumDomain.EMISSION:      ExtrapolationPolicy.ZERO,
+    SpectrumDomain.REFLECTANCE: ExtrapolationPolicy.CLAMP,
+    SpectrumDomain.ILLUMINANT: ExtrapolationPolicy.ZERO,
+    SpectrumDomain.CMF: ExtrapolationPolicy.ZERO,
+    SpectrumDomain.EMISSION: ExtrapolationPolicy.ZERO,
     SpectrumDomain.TRANSMITTANCE: ExtrapolationPolicy.CLAMP,
-    SpectrumDomain.UNKNOWN:       ExtrapolationPolicy.ZERO,
+    SpectrumDomain.UNKNOWN: ExtrapolationPolicy.ZERO,
 }
 
 
 # ---------------------------------------------------------------------------
 # Spectrum
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class Spectrum:
@@ -362,9 +367,8 @@ class Spectrum:
 
     def is_on_canonical_grid(self) -> bool:
         """Return True if this spectrum is already on :data:`CANONICAL_GRID`."""
-        return (
-            len(self.wavelengths) == len(CANONICAL_GRID)
-            and bool(np.allclose(self.wavelengths, CANONICAL_GRID, atol=1e-9))
+        return len(self.wavelengths) == len(CANONICAL_GRID) and bool(
+            np.allclose(self.wavelengths, CANONICAL_GRID, atol=1e-9)
         )
 
     # ------------------------------------------------------------------
@@ -434,9 +438,8 @@ class Spectrum:
 
         if kind == "pchip":
             from scipy.interpolate import PchipInterpolator
-            interp = PchipInterpolator(
-                self.wavelengths, self.values, extrapolate=False
-            )
+
+            interp = PchipInterpolator(self.wavelengths, self.values, extrapolate=False)
             new_values = interp(target_grid)
             # PchipInterpolator returns NaN for out-of-range; apply policy
             out_of_range = np.isnan(new_values)
@@ -508,8 +511,7 @@ class Spectrum:
             self.provenance.confidence, other.provenance.confidence
         )
         note = (
-            f"{operation} of '{self.provenance.source}' "
-            f"and '{other.provenance.source}'"
+            f"{operation} of '{self.provenance.source}' and '{other.provenance.source}'"
         )
         return Provenance(
             source=f"computed: {note}",
@@ -635,9 +637,7 @@ class Spectrum:
         n_clipped = int(np.sum(clipped != self.values))
         prov = self.provenance
         if warn and n_clipped > 0:
-            prov = prov.with_note(
-                f"clipped {n_clipped} value(s) to [{low}, {high}]"
-            )
+            prov = prov.with_note(f"clipped {n_clipped} value(s) to [{low}, {high}]")
         return Spectrum(
             wavelengths=self.wavelengths,
             values=clipped,
@@ -722,6 +722,7 @@ class Spectrum:
 # ---------------------------------------------------------------------------
 # Domain validation (private)
 # ---------------------------------------------------------------------------
+
 
 def _validate_domain_values(
     values: NDArray[np.float64],

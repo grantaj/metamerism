@@ -30,12 +30,12 @@ class ExtrapolationError(SpectrumError):
     """Raised when resampling would require extrapolation under RAISE policy.
 
     When resampling a spectrum from a source grid to a target grid, values at
-    wavelengths outside the source range may be required. The :class:`ExtrapolationPolicy`
-    enum controls what happens:
+    wavelengths outside the source range may be required. The
+    :class:`ExtrapolationPolicy` enum controls what happens:
 
-    * ``RAISE`` — raise this exception
-    * ``ZERO`` — fill with zero
-    * ``CLAMP`` — repeat the nearest boundary value
+    * ``RAISE`` - raise this exception
+    * ``ZERO`` - fill with zero
+    * ``CLAMP`` - repeat the nearest boundary value
 
     See :meth:`Spectrum.resample` for details.
     """
@@ -46,10 +46,10 @@ class DomainError(SpectrumError):
 
     Each :class:`SpectrumDomain` has valid value ranges:
 
-    * ``REFLECTANCE`` — values in [0, 1]
-    * ``TRANSMITTANCE`` — values in [0, 1]
-    * ``ILLUMINANT`` — values >= 0
-    * ``EMISSION`` — values >= 0
+    * ``REFLECTANCE`` - values in [0, 1]
+    * ``TRANSMITTANCE`` - values in [0, 1]
+    * ``ILLUMINANT`` - values >= 0
+    * ``EMISSION`` - values >= 0
 
     This exception is raised when constructing or modifying a spectrum if the
     values violate the range for the declared domain. Pass ``validate=False``
