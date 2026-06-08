@@ -1,3 +1,32 @@
+# -*- mode: gitignore; -*-
+# Emacs backup and recovery files
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Org-mode
+.org-id-locations
+*_archive
+
+# Flymake / Flycheck
+*_flymake.*
+flycheck_*.el
+
+# EShell
+/eshell/history
+/eshell/lastdir
+
+# Package managers
+/elpa/
+.cask/
+dist/
+.eln-cache/
+
 ## Core LaTeX auxiliary files
 *.aux
 *.fdb_latexmk
