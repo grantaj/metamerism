@@ -1,1 +1,55 @@
-"""Spectral utilities."""
+"""Spectral utilities and core types.
+
+This module provides the foundational types and utilities used by all
+higher-level modules:
+
+* :class:`Spectrum` — immutable spectral value type
+* :class:`SpectrumDomain` — physical meaning of spectral values
+* :class:`Provenance` — data origin and processing history
+* :class:`Observer` — standard colour matching functions
+* Exception types: :exc:`SpectrumError`, :exc:`GridMismatchError`,
+  :exc:`ExtrapolationError`, :exc:`DomainError`
+
+Canonical wavelength grid:
+* :data:`CANONICAL_GRID` — 380–780 nm, 5 nm spacing, 81 points
+"""
+
+from metamerism.core.exceptions import (
+    DomainError,
+    ExtrapolationError,
+    GridMismatchError,
+    SpectrumError,
+)
+from metamerism.core.observer import (
+    CIE_1931_2_DEGREE,
+    CIE_2006_10_DEGREE,
+    CIE_2006_2_DEGREE,
+    DEFAULT_OBSERVER,
+    Observer,
+)
+from metamerism.core.spectrum import (
+    CANONICAL_GRID,
+    ExtrapolationPolicy,
+    InterpolationMethod,
+    Provenance,
+    Spectrum,
+    SpectrumDomain,
+)
+
+__all__ = [
+    "CANONICAL_GRID",
+    "CIE_1931_2_DEGREE",
+    "CIE_2006_10_DEGREE",
+    "CIE_2006_2_DEGREE",
+    "DEFAULT_OBSERVER",
+    "DomainError",
+    "ExtrapolationError",
+    "ExtrapolationPolicy",
+    "GridMismatchError",
+    "InterpolationMethod",
+    "Observer",
+    "Provenance",
+    "Spectrum",
+    "SpectrumDomain",
+    "SpectrumError",
+]

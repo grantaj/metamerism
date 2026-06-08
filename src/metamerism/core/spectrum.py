@@ -34,6 +34,13 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import interp1d
 
+from metamerism.core.exceptions import (
+    DomainError,
+    ExtrapolationError,
+    GridMismatchError,
+    SpectrumError,
+)
+
 if TYPE_CHECKING:
     pass
 
@@ -229,26 +236,6 @@ _DEFAULT_EXTRAPOLATION: dict[SpectrumDomain, ExtrapolationPolicy] = {
     SpectrumDomain.TRANSMITTANCE: ExtrapolationPolicy.CLAMP,
     SpectrumDomain.UNKNOWN:       ExtrapolationPolicy.ZERO,
 }
-
-
-# ---------------------------------------------------------------------------
-# Errors
-# ---------------------------------------------------------------------------
-
-class SpectrumError(Exception):
-    """Base class for spectrum-related errors."""
-
-
-class GridMismatchError(SpectrumError):
-    """Raised when an operation requires matching grids but they differ."""
-
-
-class ExtrapolationError(SpectrumError):
-    """Raised when resampling would require extrapolation under RAISE policy."""
-
-
-class DomainError(SpectrumError):
-    """Raised when a domain-specific constraint is violated."""
 
 
 # ---------------------------------------------------------------------------
