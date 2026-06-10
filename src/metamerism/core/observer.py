@@ -124,65 +124,33 @@ def _load_observers() -> tuple[Observer, Observer, Observer]:
     """
     import colour
     import numpy as np
-    from scipy.interpolate import interp1d
 
-    from metamerism.core.spectrum import CANONICAL_GRID
+    from metamerism.core.spectrum import CANONICAL_GRID, PROJECT_SHAPE
 
     # Access the colour library's CMF database
     cmfs_db = colour.colorimetry.MSDS_CMFS_STANDARD_OBSERVER
 
-    # Select the appropriate observers
-    # CIE 1931 2-degree
-    cmf_1931 = cmfs_db["CIE 1931 2 Degree Standard Observer"]
+    # Select the appropriate observers from the colour library and align to
+    # the project-preferred shape using colour's own alignment routines. This
+    # avoids reimplementing interpolation behaviour.
+    cmf_1931 = cmfs_db["CIE 1931 2 Degree Standard Observer"].copy().align(PROJECT_SHAPE)
+    cmf_2006_2 = cmfs_db["CIE 2015 2 Degree Standard Observer"].copy().align(PROJECT_SHAPE)
+    cmf_2006_10 = cmfs_db["CIE 2015 10 Degree Standard Observer"].copy().align(PROJECT_SHAPE)
 
-    # CIE 2015 2-degree (colour library uses 2015 instead of 2006 for 2-degree)
-    cmf_2006_2 = cmfs_db["CIE 2015 2 Degree Standard Observer"]
-
-    # CIE 2015 10-degree (colour library uses 2015 instead of 2006 for 10-degree)
-    cmf_2006_10 = cmfs_db["CIE 2015 10 Degree Standard Observer"]
-
-    def resample_to_canonical(cmf_obj) -> NDArray[np.float64]:
-        """Resample CMF data to the canonical wavelength grid.
-
-        Parameters
-        ----------
-        cmf_obj : colour.colorimetry.cmfs.XYZ_ColourMatchingFunctions
-            CMF data from the colour library.
-
-        Returns
-        -------
-        resampled : NDArray[np.float64]
-            CMF values on CANONICAL_GRID, shape (81, 3).
-        """
-        wavelengths = np.asarray(cmf_obj.wavelengths)
-        values = np.asarray(cmf_obj.values)  # shape (n, 3) for X, Y, Z
-
-        # Interpolate each of the three CMF components to the canonical grid
-        resampled = np.zeros((len(CANONICAL_GRID), 3))
-        for i in range(3):
-            # Linear interpolation (appropriate for CMFs)
-            f = interp1d(
-                wavelengths,
-                values[:, i],
-                kind="linear",
-                bounds_error=False,
-                fill_value=0.0,  # Zero outside the measured range
-            )
-            resampled[:, i] = f(CANONICAL_GRID)
-
-        return resampled
-
-    # Resample all three observers to the canonical grid
-    cmf_1931_vals = resample_to_canonical(cmf_1931)
-    cmf_2006_2_vals = resample_to_canonical(cmf_2006_2)
-    cmf_2006_10_vals = resample_to_canonical(cmf_2006_10)
+    # Extract values (shape (81, 3)) directly from the aligned CMF objects
+    cmf_1931_vals = np.asarray(cmf_1931.values)
+    cmf_2006_2_vals = np.asarray(cmf_2006_2.values)
+    cmf_2006_10_vals = np.asarray(cmf_2006_10.values)
 
     # Trapezoidal integration weights for 5 nm spacing (from 380 to 780 nm).
-    weights = np.full(81, 5.0)
-    weights[0] = 2.5
-    weights[-1] = 2.5
+    # Keeping explicit weights preserves behaviour in xyz() which multiplies
+    # CMFs by integration_weights; these weights are independent of the
+    # interpolation method used above.
+    weights = np.full(len(CANONICAL_GRID), float(PROJECT_SHAPE.interval))
+    weights[0] = float(PROJECT_SHAPE.interval) / 2.0
+    weights[-1] = float(PROJECT_SHAPE.interval) / 2.0
 
-    # Create Observer instances
+    # Create Observer instances as thin wrappers over the numeric arrays.
     obs_1931 = Observer(
         name="CIE 1931 2 Degree",
         cmf=cmf_1931_vals,
