@@ -22,4 +22,12 @@ uv run ruff format .
 uv run ty check
 ```
 
+Notes on colour handling
+
+- This project uses colour-science for all numerical colour and spectral
+  operations. Use `colour` (https://www.colour-science.org/) for conversions
+  (sd_to_XYZ, XYZ_to_Lab, XYZ_to_sRGB, delta_E, etc.).
+- Use `metamerism` for provenance-aware loading, domain semantics, and
+  project-specific workflows only.
+
 
