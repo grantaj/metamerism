@@ -51,7 +51,8 @@ def dot_spectra(a: Spectrum, b: Spectrum) -> float:
     sd_b = _align_sd(b.to_colour())
     wavelengths = np.asarray(sd_a.wavelengths)
     values = sd_a.values * sd_b.values
-    return float(np.trapz(values, wavelengths))
+    # Use numpy.trapezoid for compatibility with NumPy 2.0+
+    return float(np.trapezoid(values, wavelengths))
 
 
 def integrate_spectrum(s: Spectrum) -> float:

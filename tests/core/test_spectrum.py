@@ -278,26 +278,23 @@ class TestProperties:
 
 
 class TestResample:
-    def test_resample_deprecated_but_functional(self):
-        """Legacy resample API is deprecated but still functional for now."""
+    def test_resample_now_removed(self):
+        """Legacy resample API has been removed; callers should use colour alignment or ops."""
         s = flat_spectrum()
-        with pytest.warns(DeprecationWarning):
-            s2 = s.resample(CANONICAL_GRID)
-        assert s2 is s
+        with pytest.raises(NotImplementedError):
+            _ = s.resample(CANONICAL_GRID)
 
-    def test_to_canonical_warns(self):
+    def test_to_canonical_removed(self):
         wl = np.linspace(400, 700, 31)
         s = Spectrum.from_arrays(wl, np.full(31, 0.5))
-        with pytest.warns(DeprecationWarning):
-            s2 = s.to_canonical()
-        assert s2.is_on_canonical_grid()
+        with pytest.raises(NotImplementedError):
+            _ = s.to_canonical()
 
-    def test_deprecated_resample_affects_provenance(self):
+    def test_deprecated_resample_not_present(self):
         wl = np.linspace(400, 700, 31)
         s = Spectrum.from_arrays(wl, np.full(31, 0.5))
-        with pytest.warns(DeprecationWarning):
-            s2 = s.resample(CANONICAL_GRID)
-        assert "resampled" in (s2.provenance.notes or "")
+        with pytest.raises(NotImplementedError):
+            _ = s.resample(CANONICAL_GRID)
 
 
 # ============================================================================
@@ -306,27 +303,28 @@ class TestResample:
 
 
 class TestArithmetic:
-    def test_arithmetic_operators_warn_deprecated(self):
+    def test_arithmetic_operators_removed(self):
         s1 = flat_spectrum(0.5)
         s2 = flat_spectrum(0.4)
-        with pytest.warns(DeprecationWarning):
+        with pytest.raises(NotImplementedError):
             _ = s1 * s2
-        with pytest.warns(DeprecationWarning):
+        with pytest.raises(NotImplementedError):
             _ = s1 + s2
-        with pytest.warns(DeprecationWarning):
+        with pytest.raises(NotImplementedError):
             _ = s1 - s2
-        with pytest.warns(DeprecationWarning):
+        with pytest.raises(NotImplementedError):
             _ = s1 * 2.0
 
     def test_mul_combined_confidence_preserved(self):
+        from metamerism.core.ops import multiply_spectra
+
         p1 = Provenance(confidence=0.9)
         p2 = Provenance(confidence=0.6)
         s1 = flat_spectrum(0.5)
         s1 = Spectrum(s1.wavelengths, s1.values, s1.domain, p1)
         s2 = flat_spectrum(1.0)
         s2 = Spectrum(s2.wavelengths, s2.values, s2.domain, p2)
-        with pytest.warns(DeprecationWarning):
-            product = s1 * s2
+        product = multiply_spectra(s1, s2)
         assert product.provenance.confidence == pytest.approx(0.6)
 
 
