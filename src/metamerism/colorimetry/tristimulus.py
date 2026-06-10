@@ -21,27 +21,10 @@ def xyz(
 ) -> NDArray[np.float64]:
     """Compute CIE XYZ tristimulus values from spectral data.
 
-    Integrates the product of illuminant, reflectance, and colour matching
-    functions over the wavelength grid using the trapezoidal rule.
-
-    The standard integration is:
-        X = ∫ I(λ) R(λ) x̄(λ) dλ
-        Y = ∫ I(λ) R(λ) ȳ(λ) dλ
-        Z = ∫ I(λ) R(λ) z̄(λ) dλ
-
-    Args:
-        reflectance: Spectrum object with reflectance values. Domain must be
-            REFLECTANCE.
-        illuminant: Spectrum object with illuminant spectral power distribution.
-        observer: Observer object with colour matching functions.
-
-    Returns:
-        XYZ as shape (3,) array [X, Y, Z].
-
-    Raises:
-        DomainError: If spectrum domains are invalid.
-        GridMismatchError: If wavelength grids don't match.
-        ValueError: If spectra are not on the canonical grid.
+    Prefer delegation to the `colour` library when the provided *observer*
+    corresponds to a standard CIE observer loaded from `colour`. For custom
+    observers (e.g. tests using a synthetic Observer), fall back to the
+    original numeric integration.
     """
     if reflectance.domain is not SpectrumDomain.REFLECTANCE:
         msg = "reflectance domain must be REFLECTANCE"
@@ -61,6 +44,32 @@ def xyz(
         msg = "spectra must be on canonical grid (380-780 nm, 5 nm spacing)"
         raise ValueError(msg)
 
+    # If observer.name corresponds to one of the standard CIE observers we
+    # expose, use colour.sd_to_XYZ which is well-tested and flexible.
+    std_names = {
+        "CIE 1931 2 Degree": "CIE 1931 2 Degree Standard Observer",
+        "CIE 2015 2 Degree": "CIE 2015 2 Degree Standard Observer",
+        "CIE 2015 10 Degree": "CIE 2015 10 Degree Standard Observer",
+    }
+
+    if observer.name in std_names:
+        # Align spectra to project-preferred shape and build a product SD.
+        sd_ref = reflectance.to_colour().copy().align(PROJECT_SHAPE)
+        sd_ill = illuminant.to_colour().copy().align(PROJECT_SHAPE)
+        product_values = sd_ill.values * sd_ref.values
+        wavelengths = np.asarray(sd_ref.wavelengths)
+        data = {float(w): float(v) for w, v in zip(wavelengths, product_values)}
+        sd_product = colour.SpectralDistribution(data)
+
+        cmf_key = std_names[observer.name]
+        cmfs = colour.colorimetry.MSDS_CMFS_STANDARD_OBSERVER[cmf_key].copy().align(
+            PROJECT_SHAPE
+        )
+
+        xyz_vals = colour.sd_to_XYZ(sd_product, cmfs=cmfs)
+        return np.asarray(xyz_vals)
+
+    # Fallback: numeric integration using the provided Observer arrays.
     product = illuminant.values * reflectance.values
     return np.asarray(product @ (observer.cmf * observer.integration_weights[:, None]))
 
