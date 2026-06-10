@@ -435,6 +435,11 @@ class Spectrum:
         extrapolation: ExtrapolationPolicy | None = None,
         reduce_confidence: bool = True,
     ) -> Spectrum:
+        raise NotImplementedError(
+            "Spectrum.resample was removed; use metamerism.core.ops.resample_spectrum "
+            "or convert to a colour.SpectralDistribution via Spectrum.to_colour() and "
+            "use colour's alignment helpers."
+        )
         """Return a new Spectrum resampled onto *target_grid*.
 
         NOTE: Deprecated in favor of using colour.SpectralDistribution
@@ -549,17 +554,9 @@ class Spectrum:
         )
 
     def to_canonical(self) -> Spectrum:
-        """Convenience method: resample onto :data:`CANONICAL_GRID`.
-
-        Deprecated: prefer explicit colour.SpectralShape alignment via
-        :meth:`to_colour` and :meth:`colour.SpectralDistribution.align`.
-        """
-        warnings.warn(
-            "Spectrum.to_canonical is deprecated; align via Spectrum.to_colour().align()",
-            DeprecationWarning,
-            stacklevel=2,
+        raise NotImplementedError(
+            "Spectrum.to_canonical was removed; align via Spectrum.to_colour().align()"
         )
-        return self.resample(CANONICAL_GRID)
 
     # ------------------------------------------------------------------
     # Arithmetic (all require matching grids; resample first)
@@ -592,91 +589,27 @@ class Spectrum:
         )
 
     def __mul__(self, other: Spectrum | float | int) -> Spectrum:
-        """Pointwise (Hadamard) product.
-
-        Two-spectrum multiplication corresponds to the physical operation
-        s(λ) = i(λ) · r(λ).  Grids must match; call resample() first.
-
-        Deprecated: arithmetic on Spectrum is being migrated toward explicit
-        `colour` operations. This operator remains as a compatibility layer.
-        """
-        warnings.warn(
-            "Spectrum.__mul__ is deprecated; perform arithmetic on the underlying "
-            "colour.SpectralDistribution or use dedicated mixing utilities",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if isinstance(other, (int, float)):
-            return Spectrum(
-                wavelengths=self.wavelengths,
-                values=self.values * float(other),
-                domain=self.domain,
-                provenance=self.provenance.with_note(f"scaled by {other}"),
-            )
-        self._check_grid_compatibility(other)
-        return Spectrum(
-            wavelengths=self.wavelengths,
-            values=self.values * other.values,
-            domain=SpectrumDomain.UNKNOWN,
-            provenance=self._combined_provenance(other, "pointwise product"),
+        raise NotImplementedError(
+            "Spectrum.__mul__ removed; use metamerism.core.ops.multiply_spectra or "
+            "operate on colour.SpectralDistribution via Spectrum.to_colour()."
         )
 
     def __rmul__(self, other: float | int) -> Spectrum:
         return self.__mul__(other)
 
     def __add__(self, other: Spectrum | float | int) -> Spectrum:
-        """Pointwise sum.  Corresponds to additive mixing of illuminants.
-
-        Deprecated compatibility operator; prefer explicit colour operations.
-        """
-        warnings.warn(
-            "Spectrum.__add__ is deprecated; perform arithmetic on the underlying "
-            "colour.SpectralDistribution or use dedicated mixing utilities",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if isinstance(other, (int, float)):
-            return Spectrum(
-                wavelengths=self.wavelengths,
-                values=self.values + float(other),
-                domain=self.domain,
-                provenance=self.provenance.with_note(f"offset by {other}"),
-            )
-        self._check_grid_compatibility(other)
-        return Spectrum(
-            wavelengths=self.wavelengths,
-            values=self.values + other.values,
-            domain=SpectrumDomain.UNKNOWN,
-            provenance=self._combined_provenance(other, "pointwise sum"),
+        raise NotImplementedError(
+            "Spectrum.__add__ removed; use metamerism.core.ops.add_spectra or "
+            "operate on colour.SpectralDistribution via Spectrum.to_colour()."
         )
 
     def __radd__(self, other: float | int) -> Spectrum:
         return self.__add__(other)
 
     def __sub__(self, other: Spectrum | float | int) -> Spectrum:
-        """Pointwise difference.
-
-        Deprecated compatibility operator; prefer explicit colour operations.
-        """
-        warnings.warn(
-            "Spectrum.__sub__ is deprecated; perform arithmetic on the underlying "
-            "colour.SpectralDistribution or use dedicated mixing utilities",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if isinstance(other, (int, float)):
-            return Spectrum(
-                wavelengths=self.wavelengths,
-                values=self.values - float(other),
-                domain=self.domain,
-                provenance=self.provenance.with_note(f"offset by -{other}"),
-            )
-        self._check_grid_compatibility(other)
-        return Spectrum(
-            wavelengths=self.wavelengths,
-            values=self.values - other.values,
-            domain=SpectrumDomain.UNKNOWN,
-            provenance=self._combined_provenance(other, "pointwise difference"),
+        raise NotImplementedError(
+            "Spectrum.__sub__ removed; use metamerism.core.ops.subtract_spectra or "
+            "operate on colour.SpectralDistribution via Spectrum.to_colour()."
         )
 
     def __truediv__(self, other: float | int) -> Spectrum:

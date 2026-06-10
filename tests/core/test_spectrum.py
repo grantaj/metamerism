@@ -515,27 +515,33 @@ class TestSyntheticMetamerIdentity:
         )
 
     def test_reflected_spectrum_computable(self):
+        from metamerism.core.ops import multiply_spectra
+
         r = self._rectangular(480, 580)
         illum = flat_spectrum(1.0, domain=SpectrumDomain.ILLUMINANT)
-        s = r * illum
+        s = multiply_spectra(r, illum)
         assert s.n_samples == 81
         assert np.all(np.isfinite(s.values))
 
     def test_dot_with_flat_cmf_is_finite(self):
+        from metamerism.core.ops import multiply_spectra, dot_spectra
+
         r = self._rectangular(480, 580)
         illum = flat_spectrum(1.0, domain=SpectrumDomain.ILLUMINANT)
         cmf = flat_spectrum(1.0, domain=SpectrumDomain.CMF)
-        reflected = r * illum
-        response = reflected.dot(cmf)
+        reflected = multiply_spectra(r, illum)
+        response = dot_spectra(reflected, cmf)
         assert np.isfinite(response)
 
     def test_two_reflectances_distinguishable_under_flat_light(self):
+        from metamerism.core.ops import multiply_spectra, dot_spectra
+
         r1 = self._rectangular(480, 580)
         r2 = self._rectangular(500, 600)
         illum = flat_spectrum(1.0, domain=SpectrumDomain.ILLUMINANT)
         cmf = flat_spectrum(1.0, domain=SpectrumDomain.CMF)
-        resp1 = (r1 * illum).dot(cmf)
-        resp2 = (r2 * illum).dot(cmf)
+        resp1 = dot_spectra(multiply_spectra(r1, illum), cmf)
+        resp2 = dot_spectra(multiply_spectra(r2, illum), cmf)
         # Both integrate the same area (100 nm of 0.8 + rest at 0.1),
         # so responses should be approximately equal under a flat CMF
         assert resp1 == pytest.approx(resp2, rel=1e-6)
