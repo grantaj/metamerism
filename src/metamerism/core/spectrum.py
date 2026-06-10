@@ -31,8 +31,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
+import colour
 from numpy.typing import NDArray
 from scipy.interpolate import interp1d
+# Note: interpolation usage remains only to support legacy tests during
+# phased migration. Long term such operations should call into colour's
+# interpolation/extrapolation helpers or operate on SpectralDistribution objects.
 
 from metamerism.core.exceptions import (
     DomainError,
@@ -59,6 +63,11 @@ if TYPE_CHECKING:
 #: resampled onto this grid on ingestion.  Resampling is logged via the
 #: Provenance attached to the resulting Spectrum.
 CANONICAL_GRID: NDArray[np.float64] = np.linspace(380.0, 780.0, 81)
+
+# Project-preferred spectral shape expressed for convenience.  This is a
+# convenience alias to a colour.SpectralShape rather than a bespoke internal
+# storage model; use it when aligning or constructing spectral distributions.
+PROJECT_SHAPE = colour.SpectralShape(380.0, 780.0, 5.0)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +346,48 @@ class Spectrum:
             domain=domain,
             provenance=provenance or Provenance(),
         )
+
+    # ------------------------------------------------------------------
+    # Interop with colour-science (Phase 1)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_colour(
+        cls,
+        sd: "colour.SpectralDistribution",
+        *,
+        domain: SpectrumDomain = SpectrumDomain.UNKNOWN,
+        provenance: Provenance | None = None,
+    ) -> "Spectrum":
+        """Construct a Spectrum from a colour.SpectralDistribution.
+
+        This is a thin interop helper that copies wavelength and value data
+        from an existing `colour` object and preserves provenance.
+        """
+        # Allow anything accepted by colour to be passed through
+        if not isinstance(sd, colour.SpectralDistribution):
+            sd = colour.SpectralDistribution(sd)
+
+        wl = np.asarray(sd.wavelengths, dtype=np.float64)
+        v = np.asarray(sd.values, dtype=np.float64)
+
+        prov = provenance or Provenance(source=getattr(sd, "name", "colour.sd"))
+        return cls(wavelengths=wl, values=v, domain=domain, provenance=prov)
+
+    def to_colour(self, name: str | None = None) -> "colour.SpectralDistribution":
+        """Return a colour.SpectralDistribution representing this Spectrum.
+
+        The returned object uses the Spectrum provenance.source as the name
+        unless *name* is provided.
+        """
+        data = {float(w): float(v) for w, v in zip(self.wavelengths, self.values)}
+        sd = colour.SpectralDistribution(data, name=name or self.provenance.source)
+        return sd
+
+    @property
+    def sd(self) -> "colour.SpectralDistribution":
+        """Convenience property returning a colour SpectralDistribution."""
+        return self.to_colour()
 
     # ------------------------------------------------------------------
     # Properties
