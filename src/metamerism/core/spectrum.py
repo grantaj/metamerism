@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import colour
+import warnings
 from numpy.typing import NDArray
 from scipy.interpolate import interp1d
 # Note: interpolation usage remains only to support legacy tests during
@@ -436,6 +437,11 @@ class Spectrum:
     ) -> Spectrum:
         """Return a new Spectrum resampled onto *target_grid*.
 
+        NOTE: Deprecated in favor of using colour.SpectralDistribution
+        interpolation/align helpers via :meth:`to_colour` and
+        :func:`colour.SpectralDistribution.interpolate` or
+        :func:`colour.SpectralDistribution.align`.
+
         Parameters
         ----------
         target_grid:
@@ -451,6 +457,12 @@ class Spectrum:
             If True and any extrapolation occurs, reduce provenance
             confidence by 0.1 and record a note.
         """
+        warnings.warn(
+            "Spectrum.resample is deprecated; use Spectrum.to_colour() and colour's "
+            "interpolation helpers instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         target_grid = np.asarray(target_grid, dtype=np.float64)
         if not np.all(np.diff(target_grid) > 0):
             raise ValueError("target_grid must be strictly monotonically increasing")
@@ -537,7 +549,16 @@ class Spectrum:
         )
 
     def to_canonical(self) -> Spectrum:
-        """Convenience method: resample onto :data:`CANONICAL_GRID`."""
+        """Convenience method: resample onto :data:`CANONICAL_GRID`.
+
+        Deprecated: prefer explicit colour.SpectralShape alignment via
+        :meth:`to_colour` and :meth:`colour.SpectralDistribution.align`.
+        """
+        warnings.warn(
+            "Spectrum.to_canonical is deprecated; align via Spectrum.to_colour().align()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.resample(CANONICAL_GRID)
 
     # ------------------------------------------------------------------
@@ -575,7 +596,16 @@ class Spectrum:
 
         Two-spectrum multiplication corresponds to the physical operation
         s(λ) = i(λ) · r(λ).  Grids must match; call resample() first.
+
+        Deprecated: arithmetic on Spectrum is being migrated toward explicit
+        `colour` operations. This operator remains as a compatibility layer.
         """
+        warnings.warn(
+            "Spectrum.__mul__ is deprecated; perform arithmetic on the underlying "
+            "colour.SpectralDistribution or use dedicated mixing utilities",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if isinstance(other, (int, float)):
             return Spectrum(
                 wavelengths=self.wavelengths,
@@ -595,7 +625,16 @@ class Spectrum:
         return self.__mul__(other)
 
     def __add__(self, other: Spectrum | float | int) -> Spectrum:
-        """Pointwise sum.  Corresponds to additive mixing of illuminants."""
+        """Pointwise sum.  Corresponds to additive mixing of illuminants.
+
+        Deprecated compatibility operator; prefer explicit colour operations.
+        """
+        warnings.warn(
+            "Spectrum.__add__ is deprecated; perform arithmetic on the underlying "
+            "colour.SpectralDistribution or use dedicated mixing utilities",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if isinstance(other, (int, float)):
             return Spectrum(
                 wavelengths=self.wavelengths,
@@ -615,7 +654,16 @@ class Spectrum:
         return self.__add__(other)
 
     def __sub__(self, other: Spectrum | float | int) -> Spectrum:
-        """Pointwise difference."""
+        """Pointwise difference.
+
+        Deprecated compatibility operator; prefer explicit colour operations.
+        """
+        warnings.warn(
+            "Spectrum.__sub__ is deprecated; perform arithmetic on the underlying "
+            "colour.SpectralDistribution or use dedicated mixing utilities",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if isinstance(other, (int, float)):
             return Spectrum(
                 wavelengths=self.wavelengths,
@@ -654,7 +702,16 @@ class Spectrum:
 
         Useful for illuminant spectra where absolute power is not
         meaningful.  Raises :class:`SpectrumError` if all values are zero.
+
+        Deprecated: prefer using :meth:`to_colour().normalise()` on the
+        colour SpectralDistribution and wrapping back via :meth:`from_colour`.
         """
+        warnings.warn(
+            "Spectrum.normalise is deprecated; normalise on the underlying "
+            "colour.SpectralDistribution and reconstruct a Spectrum via from_colour()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         peak = float(np.max(np.abs(self.values)))
         if peak == 0.0:
             raise SpectrumError("Cannot normalise a spectrum with all-zero values")
@@ -703,19 +760,35 @@ class Spectrum:
     def integrate(self) -> float:
         """Integrate the spectrum using the trapezoidal rule.
 
+        Deprecated: prefer using the colour.SpectralDistribution integration
+        utilities or explicit numerical integration on aligned data.
+
         Returns
         -------
         float
             ∫ values(λ) dλ over the wavelength range.
         """
+        warnings.warn(
+            "Spectrum.integrate is deprecated; use the underlying colour.SpectralDistribution",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return float(np.trapezoid(self.values, self.wavelengths))
 
     def dot(self, other: Spectrum) -> float:
         """Compute the inner product ∑ self.values * other.values * Δλ.
 
+        Deprecated: prefer computing integrals on aligned colour.SpectralDistribution
+        objects using colour or explicit numpy operations after alignment.
+
         Equivalent to integrating the pointwise product using the
         trapezoidal rule.  Grids must match.
         """
+        warnings.warn(
+            "Spectrum.dot is deprecated; compute integrals on the underlying colour objects",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._check_grid_compatibility(other)
         return float(np.trapezoid(self.values * other.values, self.wavelengths))
 
