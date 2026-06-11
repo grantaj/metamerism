@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import colour
-import warnings
 from numpy.typing import NDArray
 from scipy.interpolate import interp1d
 # Note: interpolation usage remains only to support legacy tests during
@@ -435,89 +434,19 @@ class Spectrum:
         extrapolation: ExtrapolationPolicy | None = None,
         reduce_confidence: bool = True,
     ) -> Spectrum:
+        """Removed: use metamerism.core.ops.resample_spectrum or colour alignment.
+
+        This method was intentionally removed to eliminate in-library numerical
+        resampling logic. Convert to a colour.SpectralDistribution via
+        Spectrum.to_colour() and use colour's align/interpolate utilities, or
+        call metamerism.core.ops.resample_spectrum.
+        """
         raise NotImplementedError(
             "Spectrum.resample was removed; use metamerism.core.ops.resample_spectrum "
             "or convert to a colour.SpectralDistribution via Spectrum.to_colour() and "
             "use colour's alignment helpers."
         )
-        """Return a new Spectrum resampled onto *target_grid*.
 
-        NOTE: Deprecated in favor of using colour.SpectralDistribution
-        interpolation/align helpers via :meth:`to_colour` and
-        :func:`colour.SpectralDistribution.interpolate` or
-        :func:`colour.SpectralDistribution.align`.
-
-        Parameters
-        ----------
-        target_grid:
-            Target wavelength grid in nanometres.  Must be strictly
-            monotonically increasing.
-        method:
-            Interpolation method.  Defaults to the domain-appropriate
-            choice defined in :data:`_DEFAULT_INTERPOLATION`.
-        extrapolation:
-            Policy for target points outside the source range.  Defaults
-            to the domain-appropriate choice.
-        reduce_confidence:
-            If True and any extrapolation occurs, reduce provenance
-            confidence by 0.1 and record a note.
-        """
-        warnings.warn(
-            "Spectrum.resample is deprecated; use Spectrum.to_colour() and colour's "
-            "interpolation helpers instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        target_grid = np.asarray(target_grid, dtype=np.float64)
-        if not np.all(np.diff(target_grid) > 0):
-            raise ValueError("target_grid must be strictly monotonically increasing")
-
-        if (
-            self.is_on_canonical_grid()
-            and len(target_grid) == len(CANONICAL_GRID)
-            and np.allclose(target_grid, CANONICAL_GRID, atol=1e-9)
-        ):
-            return self
-
-        method = method or _DEFAULT_INTERPOLATION[self.domain]
-        extrapolation = extrapolation or _DEFAULT_EXTRAPOLATION[self.domain]
-
-        needs_extrapolation = (
-            target_grid[0] < self.wl_min or target_grid[-1] > self.wl_max
-        )
-
-        if needs_extrapolation and extrapolation is ExtrapolationPolicy.RAISE:
-            raise ExtrapolationError(
-                f"Target grid [{target_grid[0]:.1f}, {target_grid[-1]:.1f}] nm "
-                f"extends outside source range [{self.wl_min:.1f}, "
-                f"{self.wl_max:.1f}] nm and extrapolation policy is RAISE."
-            )
-
-        # Build interpolator over the source range
-        kind: str
-        if method is InterpolationMethod.LINEAR:
-            kind = "linear"
-        elif method is InterpolationMethod.CUBIC:
-            kind = "cubic"
-        elif method is InterpolationMethod.PCHIP:
-            kind = "pchip"
-        else:
-            kind = "linear"
-
-        if kind == "pchip":
-            from scipy.interpolate import PchipInterpolator
-
-            interp = PchipInterpolator(self.wavelengths, self.values, extrapolate=False)
-            new_values = interp(target_grid)
-            # PchipInterpolator returns NaN for out-of-range; apply policy
-            out_of_range = np.isnan(new_values)
-        else:
-            interp_fn = interp1d(
-                self.wavelengths,
-                self.values,
-                kind=kind,
-                bounds_error=False,
-                fill_value=np.nan,
             )
             new_values = interp_fn(target_grid)
             out_of_range = np.isnan(new_values)
@@ -554,6 +483,11 @@ class Spectrum:
         )
 
     def to_canonical(self) -> Spectrum:
+        """Removed: use Spectrum.to_colour().align(PROJECT_SHAPE) or ops helper.
+
+        Kept as an explicit removal point to avoid accidental reliance on
+        previously available implicit canonicalisation behavior.
+        """
         raise NotImplementedError(
             "Spectrum.to_canonical was removed; align via Spectrum.to_colour().align()"
         )
@@ -631,31 +565,15 @@ class Spectrum:
     # ------------------------------------------------------------------
 
     def normalise(self, *, to: float = 1.0) -> Spectrum:
-        """Return a copy scaled so the maximum value equals *to*.
+        """Removed: normalisation should be performed on colour.SpectralDistribution or via ops.
 
-        Useful for illuminant spectra where absolute power is not
-        meaningful.  Raises :class:`SpectrumError` if all values are zero.
-
-        Deprecated: prefer using :meth:`to_colour().normalise()` on the
-        colour SpectralDistribution and wrapping back via :meth:`from_colour`.
+        This method was removed to centralise numerical operations outside the
+        thin Spectrum wrapper. Use metamerism.core.ops.normalise_spectrum or
+        convert to a colour.SpectralDistribution and call its normalise method.
         """
-        warnings.warn(
-            "Spectrum.normalise is deprecated; normalise on the underlying "
-            "colour.SpectralDistribution and reconstruct a Spectrum via from_colour()",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        peak = float(np.max(np.abs(self.values)))
-        if peak == 0.0:
-            raise SpectrumError("Cannot normalise a spectrum with all-zero values")
-        scale = to / peak
-        return Spectrum(
-            wavelengths=self.wavelengths,
-            values=self.values * scale,
-            domain=self.domain,
-            provenance=self.provenance.with_note(
-                f"normalised to peak={to} (scale factor {scale:.6g})"
-            ),
+        raise NotImplementedError(
+            "Spectrum.normalise was removed; normalise on the underlying colour.SpectralDistribution "
+            "or use metamerism.core.ops.normalise_spectrum."
         )
 
     def clip(
@@ -691,39 +609,26 @@ class Spectrum:
     # ------------------------------------------------------------------
 
     def integrate(self) -> float:
-        """Integrate the spectrum using the trapezoidal rule.
+        """Removed: integration should be done via colour or ops helpers.
 
-        Deprecated: prefer using the colour.SpectralDistribution integration
-        utilities or explicit numerical integration on aligned data.
-
-        Returns
-        -------
-        float
-            ∫ values(λ) dλ over the wavelength range.
+        Use metamerism.core.ops.integrate_spectrum or convert to a
+        colour.SpectralDistribution and use colour's integration utilities.
         """
-        warnings.warn(
-            "Spectrum.integrate is deprecated; use the underlying colour.SpectralDistribution",
-            DeprecationWarning,
-            stacklevel=2,
+        raise NotImplementedError(
+            "Spectrum.integrate was removed; integrate on the underlying colour.SpectralDistribution "
+            "or use metamerism.core.ops.integrate_spectrum."
         )
-        return float(np.trapezoid(self.values, self.wavelengths))
 
     def dot(self, other: Spectrum) -> float:
-        """Compute the inner product ∑ self.values * other.values * Δλ.
+        """Removed: use colour alignment and ops for dot/integration.
 
-        Deprecated: prefer computing integrals on aligned colour.SpectralDistribution
-        objects using colour or explicit numpy operations after alignment.
-
-        Equivalent to integrating the pointwise product using the
-        trapezoidal rule.  Grids must match.
+        Use metamerism.core.ops.dot_spectra or align both spectra as
+        colour.SpectralDistribution objects and compute the integral there.
         """
-        warnings.warn(
-            "Spectrum.dot is deprecated; compute integrals on the underlying colour objects",
-            DeprecationWarning,
-            stacklevel=2,
+        raise NotImplementedError(
+            "Spectrum.dot was removed; compute integrals on the underlying colour.SpectralDistribution "
+            "objects or use metamerism.core.ops.dot_spectra."
         )
-        self._check_grid_compatibility(other)
-        return float(np.trapezoid(self.values * other.values, self.wavelengths))
 
     # ------------------------------------------------------------------
     # Comparison and identity
