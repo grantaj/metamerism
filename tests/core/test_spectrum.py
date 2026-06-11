@@ -334,10 +334,14 @@ class TestArithmetic:
 
 
 class TestNormaliseAndClip:
-    def test_normalise_warns_deprecated(self):
+    def test_normalise_uses_ops(self):
+        from metamerism.core.ops import normalise_spectrum
+
         s = flat_spectrum(0.4)
-        with pytest.warns(DeprecationWarning):
-            _ = s.normalise()
+        s2 = normalise_spectrum(s)
+        # normalise_spectrum aligns and scales so peak == 1.0 by default
+        assert float(np.max(np.abs(s2.values))) == pytest.approx(1.0)
+        assert "normalised" in (s2.provenance.notes or "")
 
     def test_clip_behaviour_preserved(self):
         values = np.linspace(-0.1, 1.1, 81)
@@ -352,13 +356,17 @@ class TestNormaliseAndClip:
 
 
 class TestIntegration:
-    def test_integrate_and_dot_warn_deprecated(self):
+    def test_integrate_and_dot_use_ops(self):
+        from metamerism.core.ops import dot_spectra, integrate_spectrum
+
         r = flat_spectrum(0.5)
         i = flat_spectrum(2.0, domain=SpectrumDomain.ILLUMINANT)
-        with pytest.warns(DeprecationWarning):
-            _ = r.dot(i)
-        with pytest.warns(DeprecationWarning):
-            _ = r.integrate()
+        # dot_spectra integrates the pointwise product
+        val = dot_spectra(r, i)
+        assert np.isfinite(val)
+        # integrate_spectrum integrates a single spectrum
+        integ = integrate_spectrum(r)
+        assert np.isfinite(integ)
 
 
 # ============================================================================

@@ -59,7 +59,8 @@ def integrate_spectrum(s: Spectrum) -> float:
     """Integrate spectrum after alignment to PROJECT_SHAPE."""
     sd = _align_sd(s.to_colour())
     wavelengths = np.asarray(sd.wavelengths)
-    return float(np.trapz(sd.values, wavelengths))
+    # Use numpy.trapezoid for compatibility with NumPy 2.0+
+    return float(np.trapezoid(sd.values, wavelengths))
 
 
 def normalise_spectrum(s: Spectrum, *, to: float = 1.0) -> Spectrum:
