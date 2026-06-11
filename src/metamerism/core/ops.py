@@ -42,6 +42,41 @@ def multiply_spectra(a: Spectrum, b: Spectrum) -> Spectrum:
     return Spectrum.from_colour(sd_product, domain=SpectrumDomain.UNKNOWN, provenance=prov)
 
 
+def add_spectra(a: Spectrum, b: Spectrum) -> Spectrum:
+    """Pointwise addition of two spectra after alignment to PROJECT_SHAPE."""
+    sd_a = _align_sd(a.to_colour())
+    sd_b = _align_sd(b.to_colour())
+    sum_values = sd_a.values + sd_b.values
+    wavelengths = np.asarray(sd_a.wavelengths)
+    data = {float(w): float(v) for w, v in zip(wavelengths, sum_values)}
+    sd_sum = colour.SpectralDistribution(data)
+    prov = _combined_provenance(a, b, "sum")
+    return Spectrum.from_colour(sd_sum, domain=SpectrumDomain.UNKNOWN, provenance=prov)
+
+
+def subtract_spectra(a: Spectrum, b: Spectrum) -> Spectrum:
+    """Pointwise subtraction (a - b) after alignment to PROJECT_SHAPE."""
+    sd_a = _align_sd(a.to_colour())
+    sd_b = _align_sd(b.to_colour())
+    diff_values = sd_a.values - sd_b.values
+    wavelengths = np.asarray(sd_a.wavelengths)
+    data = {float(w): float(v) for w, v in zip(wavelengths, diff_values)}
+    sd_diff = colour.SpectralDistribution(data)
+    prov = _combined_provenance(a, b, "difference")
+    return Spectrum.from_colour(sd_diff, domain=SpectrumDomain.UNKNOWN, provenance=prov)
+
+
+def scale_spectrum(s: Spectrum, factor: float) -> Spectrum:
+    """Scale a spectrum by a scalar factor after alignment to PROJECT_SHAPE."""
+    sd = _align_sd(s.to_colour())
+    scaled_values = sd.values * float(factor)
+    wavelengths = np.asarray(sd.wavelengths)
+    data = {float(w): float(v) for w, v in zip(wavelengths, scaled_values)}
+    sd_scaled = colour.SpectralDistribution(data)
+    prov = s.provenance.with_note(f"scaled by {factor}")
+    return Spectrum.from_colour(sd_scaled, domain=s.domain, provenance=prov)
+
+
 def dot_spectra(a: Spectrum, b: Spectrum) -> float:
     """Inner product (integral) of two spectra after aligning to PROJECT_SHAPE.
 

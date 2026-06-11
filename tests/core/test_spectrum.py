@@ -287,6 +287,7 @@ class TestResample:
         wl = np.linspace(400, 700, 31)
         s = Spectrum.from_arrays(wl, np.full(31, 0.5))
         sd = s.to_colour()
+        from metamerism.core.spectrum import PROJECT_SHAPE
         sd_aligned = sd.align(PROJECT_SHAPE)
         s2 = Spectrum.from_colour(sd_aligned, domain=s.domain)
         assert s2.n_samples == len(CANONICAL_GRID)
@@ -299,17 +300,24 @@ class TestResample:
 
 
 class TestArithmetic:
-    def test_arithmetic_operators_removed(self):
+    def test_arithmetic_via_ops(self):
+        from metamerism.core.ops import (
+            multiply_spectra,
+            add_spectra,
+            subtract_spectra,
+            scale_spectrum,
+        )
+
         s1 = flat_spectrum(0.5)
         s2 = flat_spectrum(0.4)
-        with pytest.raises(NotImplementedError):
-            _ = s1 * s2
-        with pytest.raises(NotImplementedError):
-            _ = s1 + s2
-        with pytest.raises(NotImplementedError):
-            _ = s1 - s2
-        with pytest.raises(NotImplementedError):
-            _ = s1 * 2.0
+        prod = multiply_spectra(s1, s2)
+        assert isinstance(prod, Spectrum)
+        summed = add_spectra(s1, s2)
+        assert isinstance(summed, Spectrum)
+        diff = subtract_spectra(s1, s2)
+        assert isinstance(diff, Spectrum)
+        scaled = scale_spectrum(s1, 2.0)
+        assert isinstance(scaled, Spectrum)
 
     def test_mul_combined_confidence_preserved(self):
         from metamerism.core.ops import multiply_spectra
