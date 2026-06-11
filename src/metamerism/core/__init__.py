@@ -34,8 +34,7 @@ from metamerism.core.observer import (
 )
 from metamerism.core.spectrum import (
     CANONICAL_GRID,
-    ExtrapolationPolicy,
-    InterpolationMethod,
+    PROJECT_SHAPE,
     Provenance,
     Spectrum,
     SpectrumDomain,
@@ -49,10 +48,9 @@ __all__ = [
     "DEFAULT_OBSERVER",
     "DomainError",
     "ExtrapolationError",
-    "ExtrapolationPolicy",
     "GridMismatchError",
-    "InterpolationMethod",
     "Observer",
+    "PROJECT_SHAPE",
     "Provenance",
     "Spectrum",
     "SpectrumDomain",

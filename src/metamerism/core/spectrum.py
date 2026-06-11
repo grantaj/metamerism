@@ -2,26 +2,18 @@
 metamerism.core.spectrum
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-Immutable spectral value type and canonical wavelength grid.
+Provenance-aware spectrum container and project spectral constants.
 
-All spectral data in this package is represented as a :class:`Spectrum`.
-A Spectrum is a frozen, self-describing vector of values sampled on a
-wavelength grid measured in nanometres.  Operations that change a
-spectrum (resampling, scaling, pointwise products) return new Spectrum
-objects; no method mutates the receiver.
-
-The canonical internal grid is defined by :data:`CANONICAL_GRID`.  All
-spectra should be resampled onto this grid before any colorimetric
-calculation.  Resampling is always explicit; the package never silently
-converts between grids.
+`Spectrum` is an immutable wrapper around sampled spectral data with
+project-specific domain and provenance metadata. Numerical spectral
+operations are intentionally delegated to `colour-science`.
 
 Typical usage::
 
-    from metamerism.core.spectrum import Spectrum, CANONICAL_GRID, SpectrumDomain
+    from metamerism.core.spectrum import Spectrum, PROJECT_SHAPE, SpectrumDomain
 
     r = Spectrum.from_arrays(wavelengths, values, domain=SpectrumDomain.REFLECTANCE)
-    r_canon = r.resample(CANONICAL_GRID)
-    product  = r_canon * illuminant_canon   # element-wise (Hadamard)
+    sd = r.to_colour().copy().align(PROJECT_SHAPE)
 """
 
 from __future__ import annotations
@@ -30,19 +22,12 @@ import enum
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-import numpy as np
 import colour
+import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import interp1d
-# Note: interpolation usage remains only to support legacy tests during
-# phased migration. Long term such operations should call into colour's
-# interpolation/extrapolation helpers or operate on SpectralDistribution objects.
 
 from metamerism.core.exceptions import (
     DomainError,
-    ExtrapolationError,
-    GridMismatchError,
-    SpectrumError,
 )
 
 if TYPE_CHECKING:
@@ -78,9 +63,9 @@ PROJECT_SHAPE = colour.SpectralShape(380.0, 780.0, 5.0)
 class SpectrumDomain(enum.Enum):
     """Physical meaning of the sampled values.
 
-    The domain determines valid value ranges and appropriate interpolation
-    behaviour.  It is stored as metadata and checked by colorimetric
-    functions that require a specific domain.
+    The domain determines valid value ranges and downstream usage intent.
+    It is stored as metadata and checked by colorimetric functions that
+    require a specific domain.
     """
 
     REFLECTANCE = "reflectance"
@@ -193,72 +178,13 @@ class Provenance:
 
 
 # ---------------------------------------------------------------------------
-# Interpolation strategy
-# ---------------------------------------------------------------------------
-
-
-class InterpolationMethod(enum.Enum):
-    """Interpolation strategy used when resampling a spectrum.
-
-    The choice of method is recorded in provenance.
-    """
-
-    LINEAR = "linear"
-    """Piecewise linear.  Safe for illuminants and CMFs."""
-
-    CUBIC = "cubic"
-    """Cubic spline.  Preferred for reflectance; smoother transitions."""
-
-    PCHIP = "pchip"
-    """Piecewise cubic Hermite.  Monotone; avoids overshoot at sharp edges."""
-
-
-_DEFAULT_INTERPOLATION: dict[SpectrumDomain, InterpolationMethod] = {
-    SpectrumDomain.REFLECTANCE: InterpolationMethod.PCHIP,
-    SpectrumDomain.ILLUMINANT: InterpolationMethod.LINEAR,
-    SpectrumDomain.CMF: InterpolationMethod.LINEAR,
-    SpectrumDomain.EMISSION: InterpolationMethod.LINEAR,
-    SpectrumDomain.TRANSMITTANCE: InterpolationMethod.PCHIP,
-    SpectrumDomain.UNKNOWN: InterpolationMethod.LINEAR,
-}
-
-
-# ---------------------------------------------------------------------------
-# Extrapolation policy
-# ---------------------------------------------------------------------------
-
-
-class ExtrapolationPolicy(enum.Enum):
-    """What to do when resampling requires values outside the source range."""
-
-    ZERO = "zero"
-    """Fill with zero.  Appropriate for illuminants and emission spectra."""
-
-    CLAMP = "clamp"
-    """Repeat the nearest boundary value."""
-
-    RAISE = "raise"
-    """Raise :class:`ExtrapolationError`."""
-
-
-_DEFAULT_EXTRAPOLATION: dict[SpectrumDomain, ExtrapolationPolicy] = {
-    SpectrumDomain.REFLECTANCE: ExtrapolationPolicy.CLAMP,
-    SpectrumDomain.ILLUMINANT: ExtrapolationPolicy.ZERO,
-    SpectrumDomain.CMF: ExtrapolationPolicy.ZERO,
-    SpectrumDomain.EMISSION: ExtrapolationPolicy.ZERO,
-    SpectrumDomain.TRANSMITTANCE: ExtrapolationPolicy.CLAMP,
-    SpectrumDomain.UNKNOWN: ExtrapolationPolicy.ZERO,
-}
-
-
-# ---------------------------------------------------------------------------
 # Spectrum
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Spectrum:
-    """An immutable, self-describing spectral vector.
+    """An immutable spectrum with project metadata.
 
     Parameters
     ----------
@@ -269,18 +195,12 @@ class Spectrum:
         Sampled spectral values.  Interpretation depends on *domain*.
     domain:
         Physical meaning of the values; determines valid ranges and
-        default interpolation behaviour.
+        downstream usage semantics.
     provenance:
         Record of data origin and processing history.
 
-    Notes
-    -----
-    Construct via :meth:`from_arrays` rather than directly, to benefit
-    from input validation.
-
-    All arithmetic operators return new Spectrum objects on the same
-    wavelength grid.  Operations on spectra with different grids raise
-    :class:`GridMismatchError`; call :meth:`resample` first.
+    Numerical operations should be performed on the underlying
+    :class:`colour.SpectralDistribution` from :meth:`to_colour`.
     """
 
     wavelengths: NDArray[np.float64]
@@ -307,9 +227,7 @@ class Spectrum:
         Parameters
         ----------
         wavelengths:
-            Wavelength values in nanometres.  Need not be on the
-            canonical grid; call :meth:`resample` to move to the
-            canonical grid.
+            Wavelength values in nanometres.
         values:
             Spectral values corresponding to each wavelength.
         domain:
@@ -421,90 +339,6 @@ class Spectrum:
         return len(self.wavelengths) == len(CANONICAL_GRID) and bool(
             np.allclose(self.wavelengths, CANONICAL_GRID, atol=1e-9)
         )
-
-    # ------------------------------------------------------------------
-    # Resampling
-    # ------------------------------------------------------------------
-
-
-
-
-    # ------------------------------------------------------------------
-    # Arithmetic (all require matching grids; resample first)
-    # ------------------------------------------------------------------
-
-    def _check_grid_compatibility(self, other: Spectrum) -> None:
-        if len(self.wavelengths) != len(other.wavelengths) or not np.allclose(
-            self.wavelengths, other.wavelengths, atol=1e-9
-        ):
-            raise GridMismatchError(
-                f"Spectra have different wavelength grids. "
-                f"Self: [{self.wl_min:.1f}, {self.wl_max:.1f}] nm "
-                f"({self.n_samples} pts), "
-                f"Other: [{other.wl_min:.1f}, {other.wl_max:.1f}] nm "
-                f"({other.n_samples} pts). "
-                f"Call .resample() or .to_canonical() first."
-            )
-
-    def _combined_provenance(self, other: Spectrum, operation: str) -> Provenance:
-        combined_confidence = min(
-            self.provenance.confidence, other.provenance.confidence
-        )
-        note = (
-            f"{operation} of '{self.provenance.source}' and '{other.provenance.source}'"
-        )
-        return Provenance(
-            source=f"computed: {note}",
-            confidence=combined_confidence,
-            notes=note,
-        )
-
-
-    def __neg__(self) -> Spectrum:
-        return Spectrum(
-            wavelengths=self.wavelengths,
-            values=-self.values,
-            domain=self.domain,
-            provenance=self.provenance.with_note("negated"),
-        )
-
-    # ------------------------------------------------------------------
-    # Normalisation and clipping
-    # ------------------------------------------------------------------
-
-
-    def clip(
-        self,
-        low: float = 0.0,
-        high: float = 1.0,
-        *,
-        warn: bool = True,
-    ) -> Spectrum:
-        """Return a copy with values clipped to [*low*, *high*].
-
-        Parameters
-        ----------
-        low, high:
-            Clip bounds.
-        warn:
-            If True and any clipping occurs, append a note to provenance.
-        """
-        clipped = np.clip(self.values, low, high)
-        n_clipped = int(np.sum(clipped != self.values))
-        prov = self.provenance
-        if warn and n_clipped > 0:
-            prov = prov.with_note(f"clipped {n_clipped} value(s) to [{low}, {high}]")
-        return Spectrum(
-            wavelengths=self.wavelengths,
-            values=clipped,
-            domain=self.domain,
-            provenance=prov,
-        )
-
-    # ------------------------------------------------------------------
-    # Integration
-    # ------------------------------------------------------------------
-
 
     # ------------------------------------------------------------------
     # Comparison and identity

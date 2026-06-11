@@ -165,7 +165,7 @@ Deprecate and then remove project-local numerical methods that duplicate `colour
 
 #### Requirements
 
-- Replace internal callers with direct `colour` operations or small project-specific functions in appropriate modules.
+- Replace internal callers with direct `colour` operations.
 - Do not move duplicated logic somewhere else under a different name.
 
 #### Decision rule

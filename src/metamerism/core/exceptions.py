@@ -27,18 +27,7 @@ class GridMismatchError(SpectrumError):
 
 
 class ExtrapolationError(SpectrumError):
-    """Raised when resampling would require extrapolation under RAISE policy.
-
-    When resampling a spectrum from a source grid to a target grid, values at
-    wavelengths outside the source range may be required. The
-    :class:`ExtrapolationPolicy` enum controls what happens:
-
-    * ``RAISE`` - raise this exception
-    * ``ZERO`` - fill with zero
-    * ``CLAMP`` - repeat the nearest boundary value
-
-    See :meth:`Spectrum.resample` for details.
-    """
+    """Raised when extrapolation is required but not permitted by caller policy."""
 
 
 class DomainError(SpectrumError):

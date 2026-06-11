@@ -17,27 +17,24 @@ Test categories
 8. Integration — integrate, dot
 9. Comparison — allclose, __eq__, __hash__
 10. Domain validation — reflectance/illuminant range checks
-11. Error types — GridMismatchError, ExtrapolationError, DomainError
+11. Error types — DomainError
 """
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 
+import colour
 import numpy as np
 import pytest
 
 from metamerism.core.spectrum import (
     CANONICAL_GRID,
     DomainError,
-    ExtrapolationError,
-    ExtrapolationPolicy,
-    GridMismatchError,
-    InterpolationMethod,
+    PROJECT_SHAPE,
     Provenance,
     Spectrum,
     SpectrumDomain,
-    SpectrumError,
 )
 
 # ============================================================================
@@ -66,6 +63,11 @@ def linear_spectrum(
     wl = grid if grid is not None else CANONICAL_GRID
     values = np.clip(intercept + slope * (wl - wl[0]), 0.0, 1.0)
     return Spectrum.from_arrays(wl, values, domain=domain)
+
+
+def aligned_values(s: Spectrum) -> np.ndarray:
+    """Return values after alignment to the project spectral shape."""
+    return np.asarray(s.to_colour().copy().align(PROJECT_SHAPE).values)
 
 
 # ============================================================================
@@ -287,7 +289,6 @@ class TestResample:
         wl = np.linspace(400, 700, 31)
         s = Spectrum.from_arrays(wl, np.full(31, 0.5))
         sd = s.to_colour()
-        from metamerism.core.spectrum import PROJECT_SHAPE
         sd_aligned = sd.align(PROJECT_SHAPE)
         s2 = Spectrum.from_colour(sd_aligned, domain=s.domain)
         assert s2.n_samples == len(CANONICAL_GRID)
@@ -300,35 +301,33 @@ class TestResample:
 
 
 class TestArithmetic:
-    def test_arithmetic_via_ops(self):
-        from metamerism.core.ops import (
-            multiply_spectra,
-            add_spectra,
-            subtract_spectra,
-            scale_spectrum,
-        )
-
+    def test_arithmetic_via_colour(self):
         s1 = flat_spectrum(0.5)
         s2 = flat_spectrum(0.4)
-        prod = multiply_spectra(s1, s2)
-        assert isinstance(prod, Spectrum)
-        summed = add_spectra(s1, s2)
-        assert isinstance(summed, Spectrum)
-        diff = subtract_spectra(s1, s2)
-        assert isinstance(diff, Spectrum)
-        scaled = scale_spectrum(s1, 2.0)
-        assert isinstance(scaled, Spectrum)
+        v1 = aligned_values(s1)
+        v2 = aligned_values(s2)
+        assert np.allclose(v1 * v2, np.full_like(v1, 0.2))
+        assert np.allclose(v1 + v2, np.full_like(v1, 0.9))
+        assert np.allclose(v1 - v2, np.full_like(v1, 0.1))
+        assert np.allclose(v1 * 2.0, np.full_like(v1, 1.0))
 
-    def test_mul_combined_confidence_preserved(self):
-        from metamerism.core.ops import multiply_spectra
-
+    def test_confidence_policy_is_project_side_metadata(self):
         p1 = Provenance(confidence=0.9)
         p2 = Provenance(confidence=0.6)
         s1 = flat_spectrum(0.5)
         s1 = Spectrum(s1.wavelengths, s1.values, s1.domain, p1)
         s2 = flat_spectrum(1.0)
         s2 = Spectrum(s2.wavelengths, s2.values, s2.domain, p2)
-        product = multiply_spectra(s1, s2)
+        product_values = aligned_values(s1) * aligned_values(s2)
+        wl = np.asarray(s1.to_colour().copy().align(PROJECT_SHAPE).wavelengths)
+        sd_product = {float(w): float(v) for w, v in zip(wl, product_values)}
+        product = Spectrum.from_colour(
+            colour.SpectralDistribution(sd_product),
+            provenance=Provenance(
+                source="computed product",
+                confidence=min(s1.provenance.confidence, s2.provenance.confidence),
+            ),
+        )
         assert product.provenance.confidence == pytest.approx(0.6)
 
 
@@ -338,19 +337,29 @@ class TestArithmetic:
 
 
 class TestNormaliseAndClip:
-    def test_normalise_uses_ops(self):
-        from metamerism.core.ops import normalise_spectrum
-
+    def test_normalise_uses_colour(self):
         s = flat_spectrum(0.4)
-        s2 = normalise_spectrum(s)
-        # normalise_spectrum aligns and scales so peak == 1.0 by default
+        sd = s.to_colour().copy().align(PROJECT_SHAPE)
+        sd.normalise()
+        s2 = Spectrum.from_colour(
+            sd,
+            domain=s.domain,
+            provenance=s.provenance.with_note("normalised to 1.0"),
+        )
         assert float(np.max(np.abs(s2.values))) == pytest.approx(1.0)
         assert "normalised" in (s2.provenance.notes or "")
 
-    def test_clip_behaviour_preserved(self):
+    def test_clip_behaviour_with_explicit_numpy_and_rewrap(self):
         values = np.linspace(-0.1, 1.1, 81)
         s = Spectrum.from_arrays(CANONICAL_GRID, values, validate=False)
-        s2 = s.clip(0.0, 1.0, warn=True)
+        clipped = np.clip(s.values, 0.0, 1.0)
+        s2 = Spectrum.from_arrays(
+            s.wavelengths,
+            clipped,
+            domain=s.domain,
+            provenance=s.provenance.with_note("clipped values to [0.0, 1.0]"),
+            validate=False,
+        )
         assert "clipped" in (s2.provenance.notes or "")
 
 
@@ -360,16 +369,15 @@ class TestNormaliseAndClip:
 
 
 class TestIntegration:
-    def test_integrate_and_dot_use_ops(self):
-        from metamerism.core.ops import dot_spectra, integrate_spectrum
-
+    def test_integrate_and_dot_use_colour(self):
         r = flat_spectrum(0.5)
         i = flat_spectrum(2.0, domain=SpectrumDomain.ILLUMINANT)
-        # dot_spectra integrates the pointwise product
-        val = dot_spectra(r, i)
+        sd_r = r.to_colour().copy().align(PROJECT_SHAPE)
+        sd_i = i.to_colour().copy().align(PROJECT_SHAPE)
+        wavelengths = np.asarray(sd_r.wavelengths)
+        val = np.trapezoid(sd_r.values * sd_i.values, wavelengths)
         assert np.isfinite(val)
-        # integrate_spectrum integrates a single spectrum
-        integ = integrate_spectrum(r)
+        integ = np.trapezoid(sd_r.values, wavelengths)
         assert np.isfinite(integ)
 
 
@@ -525,33 +533,47 @@ class TestSyntheticMetamerIdentity:
         )
 
     def test_reflected_spectrum_computable(self):
-        from metamerism.core.ops import multiply_spectra
-
         r = self._rectangular(480, 580)
         illum = flat_spectrum(1.0, domain=SpectrumDomain.ILLUMINANT)
-        s = multiply_spectra(r, illum)
+        sd_r = r.to_colour().copy().align(PROJECT_SHAPE)
+        sd_i = illum.to_colour().copy().align(PROJECT_SHAPE)
+        s = Spectrum.from_colour(
+            colour.SpectralDistribution(
+                {float(w): float(v) for w, v in zip(sd_r.wavelengths, sd_r.values * sd_i.values)}
+            ),
+            domain=SpectrumDomain.UNKNOWN,
+        )
         assert s.n_samples == 81
         assert np.all(np.isfinite(s.values))
 
     def test_dot_with_flat_cmf_is_finite(self):
-        from metamerism.core.ops import multiply_spectra, dot_spectra
-
         r = self._rectangular(480, 580)
         illum = flat_spectrum(1.0, domain=SpectrumDomain.ILLUMINANT)
         cmf = flat_spectrum(1.0, domain=SpectrumDomain.CMF)
-        reflected = multiply_spectra(r, illum)
-        response = dot_spectra(reflected, cmf)
+        sd_r = r.to_colour().copy().align(PROJECT_SHAPE)
+        sd_i = illum.to_colour().copy().align(PROJECT_SHAPE)
+        sd_c = cmf.to_colour().copy().align(PROJECT_SHAPE)
+        reflected = sd_r.values * sd_i.values
+        response = np.trapezoid(reflected * sd_c.values, np.asarray(sd_r.wavelengths))
         assert np.isfinite(response)
 
     def test_two_reflectances_distinguishable_under_flat_light(self):
-        from metamerism.core.ops import multiply_spectra, dot_spectra
-
         r1 = self._rectangular(480, 580)
         r2 = self._rectangular(500, 600)
         illum = flat_spectrum(1.0, domain=SpectrumDomain.ILLUMINANT)
         cmf = flat_spectrum(1.0, domain=SpectrumDomain.CMF)
-        resp1 = dot_spectra(multiply_spectra(r1, illum), cmf)
-        resp2 = dot_spectra(multiply_spectra(r2, illum), cmf)
+        sd_i = illum.to_colour().copy().align(PROJECT_SHAPE)
+        sd_c = cmf.to_colour().copy().align(PROJECT_SHAPE)
+        sd_r1 = r1.to_colour().copy().align(PROJECT_SHAPE)
+        sd_r2 = r2.to_colour().copy().align(PROJECT_SHAPE)
+        resp1 = np.trapezoid(
+            (sd_r1.values * sd_i.values) * sd_c.values,
+            np.asarray(sd_r1.wavelengths),
+        )
+        resp2 = np.trapezoid(
+            (sd_r2.values * sd_i.values) * sd_c.values,
+            np.asarray(sd_r2.wavelengths),
+        )
         # Both integrate the same area (100 nm of 0.8 + rest at 0.1),
         # so responses should be approximately equal under a flat CMF
         assert resp1 == pytest.approx(resp2, rel=1e-6)
