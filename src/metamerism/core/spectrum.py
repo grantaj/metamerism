@@ -426,71 +426,8 @@ class Spectrum:
     # Resampling
     # ------------------------------------------------------------------
 
-    def resample(
-        self,
-        target_grid: NDArray[np.float64],
-        *,
-        method: InterpolationMethod | None = None,
-        extrapolation: ExtrapolationPolicy | None = None,
-        reduce_confidence: bool = True,
-    ) -> Spectrum:
-        """Removed: use metamerism.core.ops.resample_spectrum or colour alignment.
 
-        This method was intentionally removed to eliminate in-library numerical
-        resampling logic. Convert to a colour.SpectralDistribution via
-        Spectrum.to_colour() and use colour's align/interpolate utilities, or
-        call metamerism.core.ops.resample_spectrum.
-        """
-        raise NotImplementedError(
-            "Spectrum.resample was removed; use metamerism.core.ops.resample_spectrum "
-            "or convert to a colour.SpectralDistribution via Spectrum.to_colour() and "
-            "use colour's alignment helpers."
-        )
 
-            )
-            new_values = interp_fn(target_grid)
-            out_of_range = np.isnan(new_values)
-
-        if np.any(out_of_range):
-            if extrapolation is ExtrapolationPolicy.ZERO:
-                new_values = np.where(out_of_range, 0.0, new_values)
-            elif extrapolation is ExtrapolationPolicy.CLAMP:
-                left_mask = target_grid < self.wl_min
-                right_mask = target_grid > self.wl_max
-                new_values = np.where(left_mask, self.values[0], new_values)
-                new_values = np.where(right_mask, self.values[-1], new_values)
-
-        # Build provenance note
-        note = (
-            f"resampled from [{self.wl_min:.1f}, {self.wl_max:.1f}] nm "
-            f"({self.n_samples} pts) to [{target_grid[0]:.1f}, "
-            f"{target_grid[-1]:.1f}] nm ({len(target_grid)} pts) "
-            f"via {method.value}"
-        )
-        if needs_extrapolation:
-            note += f"; extrapolation: {extrapolation.value}"
-
-        new_provenance = self.provenance.with_note(note)
-        if needs_extrapolation and reduce_confidence:
-            new_confidence = max(0.0, self.provenance.confidence - 0.1)
-            new_provenance = new_provenance.with_confidence(new_confidence)
-
-        return Spectrum(
-            wavelengths=target_grid,
-            values=new_values,
-            domain=self.domain,
-            provenance=new_provenance,
-        )
-
-    def to_canonical(self) -> Spectrum:
-        """Removed: use Spectrum.to_colour().align(PROJECT_SHAPE) or ops helper.
-
-        Kept as an explicit removal point to avoid accidental reliance on
-        previously available implicit canonicalisation behavior.
-        """
-        raise NotImplementedError(
-            "Spectrum.to_canonical was removed; align via Spectrum.to_colour().align()"
-        )
 
     # ------------------------------------------------------------------
     # Arithmetic (all require matching grids; resample first)
@@ -522,35 +459,6 @@ class Spectrum:
             notes=note,
         )
 
-    def __mul__(self, other: Spectrum | float | int) -> Spectrum:
-        raise NotImplementedError(
-            "Spectrum.__mul__ removed; use metamerism.core.ops.multiply_spectra or "
-            "operate on colour.SpectralDistribution via Spectrum.to_colour()."
-        )
-
-    def __rmul__(self, other: float | int) -> Spectrum:
-        return self.__mul__(other)
-
-    def __add__(self, other: Spectrum | float | int) -> Spectrum:
-        raise NotImplementedError(
-            "Spectrum.__add__ removed; use metamerism.core.ops.add_spectra or "
-            "operate on colour.SpectralDistribution via Spectrum.to_colour()."
-        )
-
-    def __radd__(self, other: float | int) -> Spectrum:
-        return self.__add__(other)
-
-    def __sub__(self, other: Spectrum | float | int) -> Spectrum:
-        raise NotImplementedError(
-            "Spectrum.__sub__ removed; use metamerism.core.ops.subtract_spectra or "
-            "operate on colour.SpectralDistribution via Spectrum.to_colour()."
-        )
-
-    def __truediv__(self, other: float | int) -> Spectrum:
-        """Scale by the reciprocal of a scalar."""
-        if other == 0:
-            raise ZeroDivisionError("Cannot divide a Spectrum by zero")
-        return self.__mul__(1.0 / other)
 
     def __neg__(self) -> Spectrum:
         return Spectrum(
@@ -564,17 +472,6 @@ class Spectrum:
     # Normalisation and clipping
     # ------------------------------------------------------------------
 
-    def normalise(self, *, to: float = 1.0) -> Spectrum:
-        """Removed: normalisation should be performed on colour.SpectralDistribution or via ops.
-
-        This method was removed to centralise numerical operations outside the
-        thin Spectrum wrapper. Use metamerism.core.ops.normalise_spectrum or
-        convert to a colour.SpectralDistribution and call its normalise method.
-        """
-        raise NotImplementedError(
-            "Spectrum.normalise was removed; normalise on the underlying colour.SpectralDistribution "
-            "or use metamerism.core.ops.normalise_spectrum."
-        )
 
     def clip(
         self,
@@ -608,27 +505,6 @@ class Spectrum:
     # Integration
     # ------------------------------------------------------------------
 
-    def integrate(self) -> float:
-        """Removed: integration should be done via colour or ops helpers.
-
-        Use metamerism.core.ops.integrate_spectrum or convert to a
-        colour.SpectralDistribution and use colour's integration utilities.
-        """
-        raise NotImplementedError(
-            "Spectrum.integrate was removed; integrate on the underlying colour.SpectralDistribution "
-            "or use metamerism.core.ops.integrate_spectrum."
-        )
-
-    def dot(self, other: Spectrum) -> float:
-        """Removed: use colour alignment and ops for dot/integration.
-
-        Use metamerism.core.ops.dot_spectra or align both spectra as
-        colour.SpectralDistribution objects and compute the integral there.
-        """
-        raise NotImplementedError(
-            "Spectrum.dot was removed; compute integrals on the underlying colour.SpectralDistribution "
-            "objects or use metamerism.core.ops.dot_spectra."
-        )
 
     # ------------------------------------------------------------------
     # Comparison and identity
