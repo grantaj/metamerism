@@ -286,3 +286,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Pigment data
+data/raw/
+data/processed/
