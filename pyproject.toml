@@ -28,6 +28,9 @@ notebook = [
     "ipykernel>=6.29",
     "jupyterlab>=4.0",
 ]
+data = [
+    "openpyxl>=3.1",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -60,4 +63,3 @@ indent-style = "space"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-
