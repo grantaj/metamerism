@@ -278,23 +278,19 @@ class TestProperties:
 
 
 class TestResample:
-    def test_resample_now_removed(self):
-        """Legacy resample API has been removed; callers should use colour alignment or ops."""
-        s = flat_spectrum()
-        with pytest.raises(NotImplementedError):
-            _ = s.resample(CANONICAL_GRID)
+    def test_align_using_colour(self):
+        """Resampling should be performed via colour.SpectralDistribution.align.
 
-    def test_to_canonical_removed(self):
+        Convert a Spectrum to a colour SpectralDistribution, align it to
+        PROJECT_SHAPE and reconstruct a Spectrum from the aligned SD.
+        """
         wl = np.linspace(400, 700, 31)
         s = Spectrum.from_arrays(wl, np.full(31, 0.5))
-        with pytest.raises(NotImplementedError):
-            _ = s.to_canonical()
-
-    def test_deprecated_resample_not_present(self):
-        wl = np.linspace(400, 700, 31)
-        s = Spectrum.from_arrays(wl, np.full(31, 0.5))
-        with pytest.raises(NotImplementedError):
-            _ = s.resample(CANONICAL_GRID)
+        sd = s.to_colour()
+        sd_aligned = sd.align(PROJECT_SHAPE)
+        s2 = Spectrum.from_colour(sd_aligned, domain=s.domain)
+        assert s2.n_samples == len(CANONICAL_GRID)
+        assert s2.is_on_canonical_grid()
 
 
 # ============================================================================
