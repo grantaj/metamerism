@@ -39,3 +39,11 @@ uv run python scripts/demo_golden_paint.py --paint "Alizarin Crimson Hue"
 The demo loads a GOLDEN Heavy Body reflectance spectrum, plots the line
 chart, and shows a D65 preview swatch.
 
+Streamlit mixing MVP
+
+```bash
+uv run streamlit run apps/streamlit_mixing.py
+```
+
+The app lets you select Golden paints, adjust weights, and compare the
+resulting mixed spectrum and preview swatch.
