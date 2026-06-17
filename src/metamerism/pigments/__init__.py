@@ -2,6 +2,7 @@
 
 from metamerism.pigments.golden import (
     GOLDEN_KS_WIDE,
+    GOLDEN_PAINTS,
     GOLDEN_REFLECTANCE_FRACTION_WIDE,
     GoldenPaintSpectrum,
     load_golden_heavy_body_paint_by_name,
@@ -10,6 +11,7 @@ from metamerism.pigments.golden import (
 
 __all__ = [
     "GOLDEN_KS_WIDE",
+    "GOLDEN_PAINTS",
     "GOLDEN_REFLECTANCE_FRACTION_WIDE",
     "GoldenPaintSpectrum",
     "load_golden_heavy_body_paint_by_name",

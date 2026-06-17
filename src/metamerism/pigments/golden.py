@@ -25,6 +25,14 @@ GOLDEN_KS_WIDE = (
 )
 """Repository path to the cleaned GOLDEN K/S table."""
 
+GOLDEN_PAINTS = (
+    Path(__file__).resolve().parents[3]
+    / "data"
+    / "processed"
+    / "golden_hb_paints.csv"
+)
+"""Repository path to the cleaned GOLDEN paint metadata table."""
+
 
 @dataclass(frozen=True)
 class GoldenPaintSpectrum:
@@ -32,6 +40,7 @@ class GoldenPaintSpectrum:
 
     product_id: int
     paint_name: str
+    lab_d65_10: tuple[float, float, float]
     reflectance: Spectrum
     ks: Spectrum
 
@@ -56,7 +65,10 @@ def _spectrum_from_row(
         if not key.startswith("wl_"):
             continue
         wavelengths.append(float(key.removeprefix("wl_")))
-        values.append(float(value))
+        sample = float(value)
+        if domain is SpectrumDomain.REFLECTANCE:
+            sample /= 100.0
+        values.append(sample)
 
     product_id = int(row["product_id"])
     paint_name = row["paint_name"]
@@ -73,28 +85,47 @@ def _spectrum_from_row(
     )
 
 
+def _lab_from_row(row: dict[str, str]) -> tuple[float, float, float]:
+    return (
+        float(row["lab_l_d65_10"]),
+        float(row["lab_a_d65_10"]),
+        float(row["lab_b_d65_10"]),
+    )
+
+
 def load_golden_heavy_body_paints(
     reflectance_csv_path: Path | None = None,
     ks_csv_path: Path | None = None,
+    paints_csv_path: Path | None = None,
 ) -> list[GoldenPaintSpectrum]:
     """Load GOLDEN Heavy Body paints with measured reflectance and K/S spectra."""
     reflectance_path = reflectance_csv_path or GOLDEN_REFLECTANCE_FRACTION_WIDE
     ks_path = ks_csv_path or GOLDEN_KS_WIDE
+    paints_path = paints_csv_path or GOLDEN_PAINTS
 
     reflectance_rows = {
         int(row["product_id"]): row for row in _read_wide_rows(reflectance_path)
     }
     ks_rows = {int(row["product_id"]): row for row in _read_wide_rows(ks_path)}
+    paint_rows = {int(row["product_id"]): row for row in _read_wide_rows(paints_path)}
 
-    if reflectance_rows.keys() != ks_rows.keys():
-        raise ValueError("reflectance and K/S tables must contain the same paints")
+    if reflectance_rows.keys() != ks_rows.keys() or (
+        reflectance_rows.keys() != paint_rows.keys()
+    ):
+        raise ValueError("Golden tables must contain the same paints")
 
     paints: list[GoldenPaintSpectrum] = []
     for product_id, reflectance_row in reflectance_rows.items():
         ks_row = ks_rows[product_id]
+        paint_row = paint_rows[product_id]
         if reflectance_row["paint_name"] != ks_row["paint_name"]:
             raise ValueError(
                 "reflectance and K/S tables disagree on paint names for "
+                f"product_id={product_id}"
+            )
+        if reflectance_row["paint_name"] != paint_row["paint_name"]:
+            raise ValueError(
+                "reflectance and metadata tables disagree on paint names for "
                 f"product_id={product_id}"
             )
 
@@ -102,6 +133,7 @@ def load_golden_heavy_body_paints(
             GoldenPaintSpectrum(
                 product_id=product_id,
                 paint_name=reflectance_row["paint_name"],
+                lab_d65_10=_lab_from_row(paint_row),
                 reflectance=_spectrum_from_row(
                     reflectance_row,
                     csv_name=reflectance_path.name,
@@ -122,6 +154,7 @@ def load_golden_heavy_body_paint_by_name(
     paint_name: str,
     reflectance_csv_path: Path | None = None,
     ks_csv_path: Path | None = None,
+    paints_csv_path: Path | None = None,
 ) -> GoldenPaintSpectrum:
     """Load one GOLDEN Heavy Body paint by exact name."""
     matches = [
@@ -129,6 +162,7 @@ def load_golden_heavy_body_paint_by_name(
         for paint in load_golden_heavy_body_paints(
             reflectance_csv_path=reflectance_csv_path,
             ks_csv_path=ks_csv_path,
+            paints_csv_path=paints_csv_path,
         )
         if paint.paint_name == paint_name
     ]
