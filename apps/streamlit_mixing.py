@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from metamerism.mixing import mix_spectra
-from metamerism.pigments import load_golden_heavy_body_reflectance
+from metamerism.pigments import load_golden_heavy_body_paints
 from metamerism.visualization import plot_perceived_colour, plot_spectrum
 
 MODE_CHOICES = {
@@ -19,7 +19,7 @@ MODE_CHOICES = {
 @st.cache_data(show_spinner=False)
 def load_paints():
     """Load the Golden paint catalogue once per session."""
-    return load_golden_heavy_body_reflectance()
+    return load_golden_heavy_body_paints()
 
 
 def inject_styles() -> None:
@@ -159,7 +159,12 @@ def render_app() -> None:
         st.stop()
 
     mixture = mix_spectra(
-        [paint.spectrum for paint in selected_paints],
+        [
+            paint.reflectance
+            if MODE_CHOICES[mode_label] == "reflectance"
+            else paint.ks
+            for paint in selected_paints
+        ],
         raw_weights,
         mode=MODE_CHOICES[mode_label],
     )
