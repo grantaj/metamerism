@@ -65,10 +65,7 @@ def _spectrum_from_row(
         if not key.startswith("wl_"):
             continue
         wavelengths.append(float(key.removeprefix("wl_")))
-        sample = float(value)
-        if domain is SpectrumDomain.REFLECTANCE:
-            sample /= 100.0
-        values.append(sample)
+        values.append(float(value))
 
     product_id = int(row["product_id"])
     paint_name = row["paint_name"]

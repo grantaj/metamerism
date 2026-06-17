@@ -53,7 +53,7 @@ def test_loader_preserves_first_row():
     assert paint.ks.n_samples == 31
     assert paint.reflectance.wavelengths[0] == pytest.approx(400.0)
     assert paint.reflectance.wavelengths[-1] == pytest.approx(700.0)
-    assert paint.reflectance.values[0] == pytest.approx(float(row["wl_400"]) / 100.0)
+    assert paint.reflectance.values[0] == pytest.approx(float(row["wl_400"]))
     assert paint.ks.values[0] == pytest.approx(float(ks_row["wl_400"]))
 
 
@@ -107,6 +107,6 @@ def test_reflectance_to_lab_matches_measured_data():
             cmfs=cmfs.copy().align(colour.SpectralShape(380, 780, 5)),
             illuminant=illuminant.copy().align(colour.SpectralShape(380, 780, 5)),
         )
-        computed = colour.XYZ_to_Lab(xyz)
+        computed = colour.XYZ_to_Lab(xyz / 100.0)
 
         assert computed == pytest.approx(measured, abs=0.75)
