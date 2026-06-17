@@ -36,6 +36,7 @@ def test_perceived_colour_rgb_returns_clipped_rgb():
     assert rgb.shape == (3,)
     assert np.all(rgb >= 0.0)
     assert np.all(rgb <= 1.0)
+    assert not np.allclose(rgb, np.ones(3))
 
 
 def test_plot_perceived_colour_draws_patch():

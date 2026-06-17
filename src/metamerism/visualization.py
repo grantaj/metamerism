@@ -58,18 +58,11 @@ def perceived_colour_rgb(
     aligned_illuminant = illuminant.copy().align(PROJECT_SHAPE)
     aligned_cmfs = cmfs.copy().align(PROJECT_SHAPE)
 
-    product = colour.SpectralDistribution(
-        {
-            float(wavelength): float(reflectance_value * illuminant_value)
-            for wavelength, reflectance_value, illuminant_value in zip(
-                aligned_reflectance.wavelengths,
-                aligned_reflectance.values,
-                aligned_illuminant.values,
-                strict=True,
-            )
-        }
+    xyz = colour.sd_to_XYZ(
+        aligned_reflectance,
+        cmfs=aligned_cmfs,
+        illuminant=aligned_illuminant,
     )
-    xyz = colour.sd_to_XYZ(product, cmfs=aligned_cmfs)
     rgb = colour.XYZ_to_sRGB(xyz / 100.0)
     return np.clip(np.asarray(rgb, dtype=np.float64), 0.0, 1.0)
 
