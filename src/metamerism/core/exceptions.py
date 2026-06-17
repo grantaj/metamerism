@@ -20,9 +20,9 @@ class SpectrumError(Exception):
 class GridMismatchError(SpectrumError):
     """Raised when an operation requires spectra on matching grids but they differ.
 
-    For example, arithmetic operations on :class:`Spectrum` objects require
-    both operands to be on the same wavelength grid. Call :meth:`Spectrum.resample`
-    or :meth:`Spectrum.to_canonical` first.
+    For example, project-specific spectrum comparison metrics require matching
+    wavelength samples. Use colour-science alignment explicitly before calling
+    those metrics when inputs are sampled differently.
     """
 
 

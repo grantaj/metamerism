@@ -25,9 +25,9 @@ from __future__ import annotations
 
 import argparse
 import csv
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
@@ -102,13 +102,19 @@ def _validate_header(ws: Worksheet) -> None:
         )
 
 
-def read_golden_workbook(xlsx_path: Path, sheet_name: str | None = None) -> list[PaintSpectrum]:
+def read_golden_workbook(
+    xlsx_path: Path,
+    sheet_name: str | None = None,
+) -> list[PaintSpectrum]:
     """Read the GOLDEN workbook and return paint spectra."""
     workbook = load_workbook(xlsx_path, data_only=True, read_only=False)
     if sheet_name is None:
         sheet_name = workbook.sheetnames[0]
     if sheet_name not in workbook.sheetnames:
-        raise ValueError(f"Sheet {sheet_name!r} not found. Available sheets: {workbook.sheetnames}")
+        raise ValueError(
+            f"Sheet {sheet_name!r} not found. Available sheets: "
+            f"{workbook.sheetnames}"
+        )
 
     ws = workbook[sheet_name]
     _validate_header(ws)
@@ -153,7 +159,11 @@ def read_golden_workbook(xlsx_path: Path, sheet_name: str | None = None) -> list
     return paints
 
 
-def _write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
+def _write_csv(
+    path: Path,
+    header: Sequence[str],
+    rows: Iterable[Sequence[object]],
+) -> None:
     """Write a CSV with stable newline and UTF-8 behaviour."""
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -203,7 +213,11 @@ def write_clean_csvs(paints: Sequence[PaintSpectrum], out_dir: Path) -> None:
         out_dir / "golden_hb_reflectance_fraction_wide.csv",
         [*base_columns, *wavelength_columns],
         (
-            [p.product_id, p.paint_name, *[value / 100.0 for value in p.reflectance_percent]]
+            [
+                p.product_id,
+                p.paint_name,
+                *[value / 100.0 for value in p.reflectance_percent],
+            ]
             for p in paints
         ),
     )
@@ -265,11 +279,11 @@ flatten the workbook into regular, Python-friendly tables.
 
 | File | Purpose |
 |---|---|
-| `golden_hb_paints.csv` | One row per paint, with product id, paint name, and CIE `L*`, `a*`, `b*` values. |
-| `golden_hb_reflectance_percent_wide.csv` | One row per paint, with spectral reflectance as percent values. |
-| `golden_hb_reflectance_fraction_wide.csv` | Same reflectance data scaled to `0-1`, usually the most convenient form for colour-science calculations. |
+| `golden_hb_paints.csv` | Paint identity and CIE Lab values. |
+| `golden_hb_reflectance_percent_wide.csv` | Reflectance as percent values. |
+| `golden_hb_reflectance_fraction_wide.csv` | Reflectance scaled to `0-1`. |
 | `golden_hb_ks_wide.csv` | One row per paint, with Kubelka-Munk `K/S` values. |
-| `golden_hb_spectra_long.csv` | Tidy/long table: one row per paint per wavelength, containing reflectance and `K/S` together. |
+| `golden_hb_spectra_long.csv` | Tidy reflectance and `K/S` values. |
 
 ## Dataset shape
 
@@ -331,7 +345,10 @@ More transparent paints can include some influence from the white backing.
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Convert the GOLDEN Heavy Body spectral .xlsx workbook to clean CSV files."
+        description=(
+            "Convert the GOLDEN Heavy Body spectral .xlsx workbook to clean "
+            "CSV files."
+        )
     )
     parser.add_argument("xlsx", type=Path, help="Path to the source .xlsx workbook")
     parser.add_argument(

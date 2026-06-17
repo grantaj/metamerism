@@ -7,10 +7,9 @@ project-specific workflows.
 
 Exposed concepts:
 
-* :class:`Spectrum` - provenance-aware wrapper around spectral data
+* :class:`Spectrum` - provenance-aware wrapper around colour spectral data
 * :class:`SpectrumDomain` - physical meaning of spectral values
 * :class:`Provenance` - data origin and processing history
-* :class:`Observer` - convenience aliases for standard colour-science CMFs
 * Exception types: :exc:`SpectrumError`, :exc:`GridMismatchError`,
   :exc:`ExtrapolationError`, :exc:`DomainError`
 
@@ -25,13 +24,6 @@ from metamerism.core.exceptions import (
     GridMismatchError,
     SpectrumError,
 )
-from metamerism.core.observer import (
-    CIE_1931_2_DEGREE,
-    CIE_2006_2_DEGREE,
-    CIE_2006_10_DEGREE,
-    DEFAULT_OBSERVER,
-    Observer,
-)
 from metamerism.core.spectrum import (
     CANONICAL_GRID,
     PROJECT_SHAPE,
@@ -42,15 +34,10 @@ from metamerism.core.spectrum import (
 
 __all__ = [
     "CANONICAL_GRID",
-    "CIE_1931_2_DEGREE",
-    "CIE_2006_2_DEGREE",
-    "CIE_2006_10_DEGREE",
-    "DEFAULT_OBSERVER",
+    "PROJECT_SHAPE",
     "DomainError",
     "ExtrapolationError",
     "GridMismatchError",
-    "Observer",
-    "PROJECT_SHAPE",
     "Provenance",
     "Spectrum",
     "SpectrumDomain",
