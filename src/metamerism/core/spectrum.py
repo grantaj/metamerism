@@ -30,6 +30,7 @@ class SpectrumDomain(enum.Enum):
     """Physical meaning of a spectral distribution's values."""
 
     REFLECTANCE = "reflectance"
+    K_S = "ks"
     ILLUMINANT = "illuminant"
     CMF = "cmf"
     EMISSION = "emission"
