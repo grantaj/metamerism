@@ -62,6 +62,30 @@ def _ks_to_reflectance(values: NDArray[np.float64]) -> NDArray[np.float64]:
     return 1.0 + ks - np.sqrt(ks * ks + 2.0 * ks)
 
 
+def _arithmetic_ks_mix(
+    ks_matrix: list[NDArray[np.float64]],
+    weights: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Blend K/S values as a weighted arithmetic mean.
+
+    The correct K-M mixing formula is (K/S)_mix = ΣwᵢKᵢ / ΣwᵢSᵢ, which
+    requires K and S separately.  Single-substrate (white-only) drawdown data
+    gives only K/S ratios, so K and S cannot be separated without black-substrate
+    measurements.  When scattering S is approximately equal across all components
+    (true for organic pigments in the same vehicle), the formula reduces to the
+    arithmetic mean: (K/S)_mix = Σwᵢ·(K/S)ᵢ.
+
+    A proxy-based S estimate (e.g. 1/min(K/S)) only works for pigments that are
+    transparent at some wavelength so that min(K/S) ≈ K_vehicle/S_total.  For
+    full-spectrum absorbers (Phthalo Blue, Chromium Oxide Dark, cadmium reds) it
+    underestimates S by orders of magnitude, collapsing the mix to the most
+    transparent component regardless of proportions.  Arithmetic averaging avoids
+    that failure mode and is the physically correct choice given the available data.
+    """
+    stack = np.stack(ks_matrix, axis=0)
+    return np.sum(stack * weights[:, None], axis=0)
+
+
 def mix_spectra(
     spectra: list[Spectrum],
     weights: list[float] | NDArray[np.float64],
@@ -101,7 +125,7 @@ def mix_spectra(
                 ks_matrix.append(_reflectance_to_ks(spectrum.values))
             else:
                 ks_matrix.append(spectrum.values)
-        mixed_ks = np.sum(np.stack(ks_matrix, axis=0) * weights_array[:, None], axis=0)
+        mixed_ks = _arithmetic_ks_mix(ks_matrix, weights_array)
         values = _ks_to_reflectance(mixed_ks)
         domain = SpectrumDomain.REFLECTANCE
         model_label = "K/S"

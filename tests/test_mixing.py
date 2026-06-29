@@ -47,7 +47,7 @@ def test_ks_mix_converts_and_returns_reflectance():
 
     ks_dark = ((1.0 - 0.2) ** 2) / (2.0 * 0.2)
     ks_light = ((1.0 - 0.8) ** 2) / (2.0 * 0.8)
-    expected_ks = 0.5 * (ks_dark + ks_light)
+    expected_ks = 0.5 * ks_dark + 0.5 * ks_light
     expected_reflectance = 1.0 + expected_ks - np.sqrt(
         expected_ks**2 + 2.0 * expected_ks
     )

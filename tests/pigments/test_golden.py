@@ -76,12 +76,22 @@ def test_measured_ks_mix_of_blue_and_yellow_is_greenish():
 
     cobalt = load_golden_heavy_body_paint_by_name("Cobalt Blue")
     hansa = load_golden_heavy_body_paint_by_name("Hansa Yellow Light")
+    diarylide = load_golden_heavy_body_paint_by_name("Diarylide Yellow")
 
-    mixture = mix_spectra([cobalt.ks, hansa.ks], [1.0, 1.0], mode="ks")
-    rgb = perceived_colour_rgb(mixture)
+    # Cobalt Blue + Hansa Yellow Light: K/S arithmetic blend produces green.
+    mix_hansa = mix_spectra([cobalt.ks, hansa.ks], [1.0, 1.0], mode="ks")
+    rgb_hansa = perceived_colour_rgb(mix_hansa)
+    assert rgb_hansa[1] > rgb_hansa[0], "green channel should exceed red"
+    assert rgb_hansa[1] > rgb_hansa[2], "green channel should exceed blue"
 
-    assert rgb[1] > rgb[0]
-    assert rgb[1] > rgb[2]
+    # Cobalt Blue + Diarylide Yellow: complementary blue + warm orange-yellow
+    # correctly produces a muted neutral; the mix should not be brighter than
+    # either pure paint (i.e. the result is darkened by mutual absorption).
+    mix_diarylide = mix_spectra([cobalt.ks, diarylide.ks], [1.0, 1.0], mode="ks")
+    rgb_diarylide = perceived_colour_rgb(mix_diarylide)
+    max_mix = float(max(rgb_diarylide))
+    max_cobalt = float(max(perceived_colour_rgb(cobalt.reflectance)))
+    assert max_mix < max_cobalt, "mixing complementary paints should darken, not lighten"
 
 
 def test_reflectance_to_lab_matches_measured_data():
