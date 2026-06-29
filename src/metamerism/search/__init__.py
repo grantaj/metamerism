@@ -15,6 +15,7 @@ from metamerism.search.feasibility import (
 )
 from metamerism.search.generate import (
     DEFAULT_ENDPOINT_FRACTION,
+    DEFAULT_N_SMOOTH_DIRECTIONS,
     CandidateGenerationConfig,
     MetamerCandidate,
     generate_directional_metamers,
@@ -61,6 +62,7 @@ __all__ = [
     "DEFAULT_ENDPOINT_FRACTION",
     "DEFAULT_MATRIX_VS_COLOUR_XYZ_TOLERANCE",
     "DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE",
+    "DEFAULT_N_SMOOTH_DIRECTIONS",
     "DEFAULT_REFLECTANCE_BOUND_TOLERANCE",
     "DEFAULT_ROUGHNESS_LIMIT",
     "CandidateGenerationConfig",

@@ -47,9 +47,13 @@ DEFAULT_ENDPOINT_FRACTION = 0.95
 # Step to 95% of the feasibility boundary. Avoids forcing wavelengths to
 # exact 0/1 while still exploring close to the edges of the feasible region.
 
+DEFAULT_N_SMOOTH_DIRECTIONS = 12
+# Number of smoothest null-space directions used for candidate generation.
+# Directions are ranked by eigenvalue of N^T D2^T D2 N; only the first k
+# (lowest roughness) are sampled. k=12 spans a rich enough smooth subspace
+# while keeping generated spectra physically plausible.
+
 _ROUGHNESS_EPS = 1e-12
-# Small constant added to roughness when computing sampling weights, so that
-# perfectly smooth basis vectors (roughness=0) get finite weight.
 
 
 def _second_difference_matrix(n: int) -> NDArray[np.float64]:
@@ -73,16 +77,23 @@ def spectral_roughness(values: NDArray[np.float64]) -> float:
     return float(np.dot(d2, d2))
 
 
-def _basis_roughnesses(basis: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Return roughness of each column of basis (shape n_null,)."""
-    n_null = basis.shape[1]
-    return np.array([spectral_roughness(basis[:, j]) for j in range(n_null)])
+def _smooth_null_rotation(basis: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Return rotation Q that reorders null-space columns by ascending roughness.
 
+    Solves the symmetric eigenvalue problem for N^T D2^T D2 N.  Because eigh
+    returns eigenvalues in ascending order, column 0 of basis @ Q is the
+    smoothest null-space direction and column -1 is the roughest.
 
-def _sampling_weights(roughnesses: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Return normalised sampling weights proportional to 1 / (roughness + eps)."""
-    weights = 1.0 / (roughnesses + _ROUGHNESS_EPS)
-    return weights / weights.sum()
+    Sampling random Gaussian vectors in the subspace spanned by the first k
+    columns of basis @ Q therefore produces the smoothest reachable spectra
+    rather than the comb-like oscillations that dominate a random SVD basis.
+    """
+    n = basis.shape[0]
+    D2 = _second_difference_matrix(n)
+    D2N = D2 @ basis          # (n-2, n_null)
+    M = D2N.T @ D2N           # (n_null, n_null) — symmetric PSD roughness Gram
+    _, Q = np.linalg.eigh(M)  # eigenvalues ascending; Q columns are eigenvectors
+    return Q
 
 
 @dataclass(frozen=True)
@@ -99,6 +110,10 @@ class CandidateGenerationConfig:
         reflectance_bound_tolerance: Maximum allowed reflectance bound
             violation before a candidate is flagged as infeasible.
         null_space_relative_tolerance: SVD threshold for null-space rank.
+        n_smooth_directions: Number of smoothest null-space basis vectors to
+            sample from. The null-space basis is rotated via eigendecomposition
+            of N^T D2^T D2 N so that the first k columns are the k smoothest
+            directions. Sampling is restricted to this smooth subspace.
     """
 
     seed: int
@@ -107,6 +122,7 @@ class CandidateGenerationConfig:
     conceal_delta_e00_limit: float = DEFAULT_CONCEAL_DELTA_E00_LIMIT
     reflectance_bound_tolerance: float = DEFAULT_REFLECTANCE_BOUND_TOLERANCE
     null_space_relative_tolerance: float = DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE
+    n_smooth_directions: int = DEFAULT_N_SMOOTH_DIRECTIONS
 
     def __post_init__(self) -> None:
         if not 0.0 < self.endpoint_fraction <= 1.0:
@@ -115,6 +131,10 @@ class CandidateGenerationConfig:
             )
         if self.n_directions < 1:
             raise ValueError(f"n_directions must be >= 1, got {self.n_directions}")
+        if self.n_smooth_directions < 1:
+            raise ValueError(
+                f"n_smooth_directions must be >= 1, got {self.n_smooth_directions}"
+            )
         if self.conceal_delta_e00_limit <= 0.0:
             raise ValueError(
                 f"conceal_delta_e00_limit must be > 0, "
@@ -129,6 +149,7 @@ class CandidateGenerationConfig:
             "conceal_delta_e00_limit": self.conceal_delta_e00_limit,
             "reflectance_bound_tolerance": self.reflectance_bound_tolerance,
             "null_space_relative_tolerance": self.null_space_relative_tolerance,
+            "n_smooth_directions": self.n_smooth_directions,
         }
 
     @classmethod
@@ -146,6 +167,9 @@ class CandidateGenerationConfig:
             null_space_relative_tolerance=d.get(
                 "null_space_relative_tolerance",
                 DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE,
+            ),
+            n_smooth_directions=d.get(
+                "n_smooth_directions", DEFAULT_N_SMOOTH_DIRECTIONS
             ),
         )
 
@@ -278,9 +302,12 @@ def generate_directional_metamers(
         relative_tolerance=config.null_space_relative_tolerance,
     )
 
-    # Rank-weighted direction sampling: prefer smoother basis vectors
-    roughnesses = _basis_roughnesses(null_space.basis)
-    weights = _sampling_weights(roughnesses)
+    # Rotate null space so columns are ordered by ascending roughness, then
+    # restrict sampling to the k smoothest directions.  This avoids the
+    # comb-like oscillations that dominate a random SVD null-space basis.
+    Q = _smooth_null_rotation(null_space.basis)
+    smooth_basis = null_space.basis @ Q   # columns: smoothest → roughest
+    k = min(config.n_smooth_directions, null_space.n_null)
 
     rng = np.random.default_rng(config.seed)
     candidates: list[MetamerCandidate] = []
@@ -294,17 +321,12 @@ def generate_directional_metamers(
     )
 
     for _ in range(config.n_directions):
-        # Sample a direction as a weighted combination of null-space basis vectors
+        # Random Gaussian vector in the k-dimensional smooth subspace
+        z_k = rng.standard_normal(k)
         z = np.zeros(null_space.n_null, dtype=np.float64)
-        # Draw basis indices proportional to smoothness weights and combine
-        chosen = rng.choice(
-            null_space.n_null, size=min(null_space.n_null, 8), replace=False, p=weights
-        )
-        coeffs = rng.standard_normal(len(chosen))
-        for idx, coeff in zip(chosen, coeffs, strict=True):
-            z[idx] = coeff
+        z[:k] = z_k
 
-        direction = null_space.basis @ z
+        direction = smooth_basis @ z
         norm = np.linalg.norm(direction)
         if norm < 1e-14:
             continue
@@ -357,7 +379,7 @@ def generate_directional_metamers(
             candidates.append(
                 MetamerCandidate(
                     spectrum=candidate_spectrum,
-                    source_reference=reference,
+                    source_reference=ref_spectrum,
                     null_space_coordinates=np.array(z, dtype=np.float64),
                     endpoint=endpoint,
                     alpha=float(alpha),
