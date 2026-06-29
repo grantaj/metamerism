@@ -10,6 +10,10 @@ from numpy.typing import NDArray
 
 from metamerism.core import PROJECT_SHAPE, Spectrum, SpectrumDomain
 
+DEFAULT_CONCEAL_DELTA_E00_LIMIT = 1.0
+# One just-noticeable difference. Pairs within this threshold are imperceptible
+# under the conceal illuminant. Tighten to 0.5 for stricter searches.
+
 
 @dataclass(frozen=True)
 class ViewingCondition:

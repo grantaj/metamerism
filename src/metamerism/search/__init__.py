@@ -1,5 +1,12 @@
 """Metameric search and scoring."""
 
+from metamerism.search.diagnostics import (
+    PoolDiagnostics,
+    ProjectionDiagnostics,
+    candidate_report,
+    check_projection,
+    summarise_pool,
+)
 from metamerism.search.feasibility import (
     DEFAULT_REFLECTANCE_BOUND_TOLERANCE,
     feasible_step_interval,
@@ -22,8 +29,15 @@ from metamerism.search.metamer import (
 )
 from metamerism.search.objectives import (
     DEFAULT_CONCEAL_DELTA_E00_LIMIT,
+    DEFAULT_ROUGHNESS_LIMIT,
+    CandidateScore,
+    RankingConfig,
+    boundary_saturation,
     passes_conceal_threshold,
+    passes_roughness_limit,
     rank_candidates,
+    rank_scored_candidates,
+    score_candidate,
 )
 from metamerism.search.projection import (
     DEFAULT_MATRIX_VS_COLOUR_XYZ_TOLERANCE,
@@ -41,23 +55,35 @@ __all__ = [
     "DEFAULT_MATRIX_VS_COLOUR_XYZ_TOLERANCE",
     "DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE",
     "DEFAULT_REFLECTANCE_BOUND_TOLERANCE",
+    "DEFAULT_ROUGHNESS_LIMIT",
     "CandidateGenerationConfig",
+    "CandidateScore",
     "ConditionResult",
     "MetamerCandidate",
     "MetamerScore",
     "NullSpace",
+    "PoolDiagnostics",
+    "ProjectionDiagnostics",
+    "RankingConfig",
     "ViewingCondition",
     "XYZProjection",
+    "boundary_saturation",
     "build_xyz_projection",
+    "candidate_report",
+    "check_projection",
     "compute_null_space",
     "feasible_step_interval",
     "generate_directional_metamers",
     "is_feasible",
     "max_bound_violation",
     "passes_conceal_threshold",
+    "passes_roughness_limit",
     "projection_xyz",
     "rank_candidates",
+    "rank_scored_candidates",
+    "score_candidate",
     "score_condition",
     "score_metameric_pair",
     "spectral_roughness",
+    "summarise_pool",
 ]

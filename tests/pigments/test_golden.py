@@ -91,7 +91,9 @@ def test_measured_ks_mix_of_blue_and_yellow_is_greenish():
     rgb_diarylide = perceived_colour_rgb(mix_diarylide)
     max_mix = float(max(rgb_diarylide))
     max_cobalt = float(max(perceived_colour_rgb(cobalt.reflectance)))
-    assert max_mix < max_cobalt, "mixing complementary paints should darken, not lighten"
+    assert max_mix < max_cobalt, (
+        "mixing complementary paints should darken, not lighten"
+    )
 
 
 def test_reflectance_to_lab_matches_measured_data():

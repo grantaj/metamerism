@@ -32,8 +32,11 @@ from metamerism.search.feasibility import (
     is_feasible,
     max_bound_violation,
 )
-from metamerism.search.metamer import ViewingCondition, score_condition
-from metamerism.search.objectives import DEFAULT_CONCEAL_DELTA_E00_LIMIT
+from metamerism.search.metamer import (
+    DEFAULT_CONCEAL_DELTA_E00_LIMIT,
+    ViewingCondition,
+    score_condition,
+)
 from metamerism.search.projection import (
     DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE,
     build_xyz_projection,
