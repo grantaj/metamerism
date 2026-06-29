@@ -138,7 +138,8 @@ src/metamerism/
     optimise.py         # later: constrained/direct optimisation
 
 apps/
-  streamlit_mixing.py   # extend only after stable search APIs exist
+  streamlit_mixing.py   # existing paint mixing explorer — do not modify
+  streamlit_metamer.py  # new: metamer search and realisability — built in Phase F
 
 tests/
   search/
@@ -218,9 +219,14 @@ class ConditionResult:
 class MetamerScore:
     conceal: ConditionResult
     reveal: tuple[ConditionResult, ...]
-    weighted_reveal_score: float
     minimum_reveal_delta_e00: float
 ```
+
+`minimum_reveal_delta_e00` is the primary ranking criterion: the weakest reveal
+mismatch across all reveal conditions.  Ranking by the minimum is conservative
+— it rewards candidates that are a strong metamer under *every* reveal
+illuminant, not just one.  Individual `ConditionResult` objects in `reveal`
+carry the per-illuminant detail for inspection.  There are no weights.
 
 ## Required behaviour
 
@@ -572,9 +578,10 @@ Make the mathematical search inspectable early, without coupling it to the UI.
 
 ## Scope
 
-Extend the existing `apps/streamlit_mixing.py` only after Phases A–E provide stable public APIs.
+Create `apps/streamlit_metamer.py` as a standalone app after Phases A–E provide
+stable public APIs.  Do not modify `apps/streamlit_mixing.py`.
 
-Add a small metamer-search panel that can:
+The app should be able to:
 
 - choose a reference paint spectrum from the existing Golden library;
 - choose conceal and reveal illuminants;
@@ -598,6 +605,20 @@ The UI should use library APIs and configuration objects, not reproduce any sear
 ---
 
 # Phase G — Paint realisability using current mixing infrastructure
+
+## Separation of concerns
+
+Phases A–E are **paint-agnostic**: they search the space of physically plausible
+reflectance spectra without reference to any specific paint library.  The
+reference spectrum r_c may be a measured Golden paint or any other reflectance;
+the generated partner spectra are ideal targets with no guaranteed physical
+realisation.
+
+Phases G–I are **paint-dependent**: they ask whether a target spectrum from the
+ideal search can be approximated by a mixture drawn from a specific set of
+available paints.  These are separate questions and must be treated separately.
+An ideal candidate with a high reveal ΔE00 that turns out to be poorly
+realisable is still a useful bound on what is theoretically achievable.
 
 ## Goal
 
@@ -757,18 +778,36 @@ x_i,y_i\ge0,\qquad
 
 This is non-convex. Do not claim global optimality.
 
+## Sparsity constraint
+
+Mixtures must be sparse: a configurable `max_components` parameter (default 3,
+maximum 4) limits how many paints can appear in a single mixture.  This reflects
+physical reality — a painter uses a small number of pigments — and makes the
+search tractable by reducing the effective search space from a 78-dimensional
+simplex to combinations of k paints from 78.
+
+```python
+@dataclass(frozen=True)
+class MixturePairSearchConfig:
+    seed: int
+    max_components: int          # default 3, maximum 4
+    n_samples_per_combination: int
+    conceal_delta_e00_limit: float
+    paint_library_version: str
+```
+
 ## Suggested first approach
 
-1. Sample mixture simplex points.
-2. Group or index mixtures by conceal colour.
-3. find close conceal matches with strong estimated reveal mismatch;
-4. refine promising pairs using constrained local optimisation;
-5. use multi-start;
-6. retain and compare multiple local optima.
+1. Enumerate paint combinations up to `max_components` in size.
+2. For each combination, sample the mixture simplex and compute conceal colour.
+3. Index sampled mixtures by conceal Lab value (KD-tree or grid).
+4. Find close conceal-matching pairs with large reveal mismatch.
+5. Refine promising pairs using constrained local optimisation.
+6. Use multi-start; retain multiple local optima.
 
 ## Acceptance criteria
 
-- Finds actual mixture pairs meeting conceal tolerance.
+- Finds actual mixture pairs meeting conceal tolerance with at most `max_components` paints each.
 - Reports all mixture fractions and forward-model assumptions.
 - Repeats reliably with a fixed seed/configuration.
 - Compares direct-search results to the ideal-target-then-approximate pipeline.
@@ -809,10 +848,32 @@ Define named constants/configuration fields. Do not scatter magic numbers.
 Examples:
 
 ```python
-DEFAULT_CONCEAL_DELTA_E00_LIMIT = ...
-DEFAULT_REFLECTANCE_BOUND_TOLERANCE = ...
-DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE = ...
-DEFAULT_MATRIX_VS_COLOUR_XYZ_TOLERANCE = ...
+DEFAULT_CONCEAL_DELTA_E00_LIMIT = 1.0
+# One just-noticeable difference. Pairs within this threshold are imperceptible
+# under the conceal illuminant. Tighten to 0.5 for stricter searches.
+
+DEFAULT_ENDPOINT_FRACTION = 0.95
+# Step to 95% of the feasibility boundary. Avoids forcing wavelengths to
+# exact 0/1 while still exploring close to the edges of the feasible region.
+
+DEFAULT_ROUGHNESS_LIMIT = None
+# No hard cutoff by default; roughness is used for ranking rather than hard
+# rejection. Calibrate a cutoff by computing the 95th-percentile roughness
+# of the Golden paint catalogue (measured paints set the upper bound of
+# "physically plausible" smoothness) and use that as a ceiling if desired.
+
+DEFAULT_REFLECTANCE_BOUND_TOLERANCE = 1e-4
+# Allow numerical violations of [0, 1] bounds up to this amount before
+# flagging a candidate as infeasible.
+
+DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE = 1e-10
+# SVD relative tolerance for determining numerical rank of the 3×81
+# projection matrix. Rank should always be 3 for a valid CMF/illuminant
+# combination; a tighter value flags ill-conditioned conditions early.
+
+DEFAULT_MATRIX_VS_COLOUR_XYZ_TOLERANCE = 0.1
+# Maximum acceptable absolute difference between projection-matrix XYZ and
+# direct colour.sd_to_XYZ, in XYZ units (where perfect white = 100).
 ```
 
 ## Testing
