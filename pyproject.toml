@@ -21,6 +21,7 @@ metamerism = "metamerism.cli:main"
 
 [dependency-groups]
 dev = [
+    "playwright>=1.61.0",
     "pytest>=8.0",
     "ruff>=0.8",
     "ty>=0.0.1a0",
