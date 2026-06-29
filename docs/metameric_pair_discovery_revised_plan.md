@@ -103,6 +103,53 @@ subject to:
 
 plus reflectance plausibility and later paint-mixture realisability constraints.
 
+## Spectral targets vs perceptual cosets
+
+A candidate spectrum \(r^*\) found by Phases C–E is one point in a 78-dimensional
+affine subspace of reflectances that all share the same XYZ as \(r_c\) under the
+conceal illuminant.  There are infinitely many spectra satisfying the conceal
+constraint; \(r^*\) is simply the one the null-space search happened to reach by
+stepping in a particular direction.
+
+This has a critical consequence for paint realisation: **the goal of Phase G is
+not to reproduce \(r^*\) spectrally**.  It is to find a paint mixture whose
+reflectance lands *anywhere* in the same perceptual coset — same XYZ under
+conceal, as different as possible under reveal.  Requiring spectral closeness to
+\(r^*\) is an unnecessary additional constraint that shrinks the feasible region
+without improving the perceptual outcome.
+
+The ideal candidate is therefore useful as:
+
+- a **feasibility proof** — it demonstrates that the perceptual coset is non-empty
+  and provides a rough upper bound on achievable reveal ΔE₀₀;
+- a **warm start** — fitting paint fractions to the candidate shape before
+  releasing the spectral constraint can speed up optimisation;
+- a **spectral hint** — the candidate's reflectance shape suggests which spectral
+  regions the partner needs to differ in.
+
+But the Phase G objective function must be formulated in terms of the perceptual
+quantities (XYZ under each illuminant), not spectral L2 distance to \(r^*\).
+
+## Reference paint darkness and achievable ΔE₀₀
+
+The maximum reveal ΔE₀₀ achievable by a smooth null-space perturbation is
+primarily limited by the reference paint's spectral headroom — how much its
+reflectance can move up or down at each wavelength within \([0, 1]\) bounds.
+
+Dark paints (mean reflectance \(\lesssim 0.1\)) have the most room: perturbations
+can swing reflectance substantially upward from a low baseline.  Empirical
+sampling over the Golden library under D65 (conceal) → A (reveal) shows:
+
+- **Dark/chromatic paints** (Dioxazine Purple, Bone Black, Phthalo Green,
+  Paynes Gray, ...): smooth-subspace reveal ΔE₀₀ ≈ 6–8.
+- **Mid-tone paints**: reveal ΔE₀₀ ≈ 2–5.
+- **Light/high-chroma paints** (Diarylide Yellow, Titanium White, ...):
+  reveal ΔE₀₀ ≈ 0.5–1.5.
+
+This is a geometric constraint on the feasibility interval, not an algorithmic
+limitation.  Choosing a dark reference paint is therefore the single most
+effective way to obtain a visually convincing metameric pair.
+
 ---
 
 # Target module layout
@@ -647,32 +694,47 @@ R_{\mathrm{mix}}(x) = \sum_i x_i R_i
 \]
 
 where \(R_i\) are the measured drawdown reflectances from the Golden library.
-This is a convex model: the objective is quadratic in \(x\) and the constraints
-are linear, so the problem is a quadratic programme solvable by NNLS or a
-standard QP solver.
 
-For an ideal target \(r_t\), solve:
+## Objective: perceptual constraints, not spectral matching
+
+The optimisation target is **not** to reproduce the ideal candidate spectrum
+\(r^*\) spectrally.  Instead, directly optimise the perceptual quantities:
 
 \[
-\min_x
-\quad
-\|W(R_{\mathrm{mix}}(x)-r_t)\|_2^2
-+
-\lambda_{\mathrm{conceal}}
-\|A_0 R_{\mathrm{mix}}(x)-
-  A_0 r_t\|_2^2
+\min_x \quad \Delta E_{00,\mathrm{conceal}}(R_{\mathrm{mix}}(x),\, r_{\mathrm{ref}})
+\]
+
+\[
+\max_x \quad \Delta E_{00,\mathrm{reveal}}(R_{\mathrm{mix}}(x),\, r_{\mathrm{ref}})
 \]
 
 subject to:
 
 \[
-x_i \ge 0,\qquad \sum_i x_i=1.
+x_i \ge 0,\qquad \sum_i x_i = 1.
 \]
 
-Note: because \(R_{\mathrm{mix}}\) is linear in \(x\), both penalty terms are
-quadratic in \(x\), making this a clean convex QP.  The XYZ conceal term uses
-the projection matrix \(A_0\) from Phase B; this avoids repeated `colour`
-calls inside the solver loop.
+Because \(R_{\mathrm{mix}}\) is linear in \(x\), the XYZ under each illuminant
+is also linear in \(x\), making both the conceal constraint and the reveal
+objective smooth functions of \(x\).  Use the projection matrix \(A_0\) from
+Phase B to compute XYZ efficiently inside the optimiser loop.
+
+A practical formulation converts this to a single-objective problem:
+
+\[
+\min_x \quad -\Delta E_{00,\mathrm{reveal}}(R_{\mathrm{mix}}(x),\, r_{\mathrm{ref}})
+\]
+
+subject to:
+
+\[
+\Delta E_{00,\mathrm{conceal}}(R_{\mathrm{mix}}(x),\, r_{\mathrm{ref}}) \le \epsilon,
+\quad x_i \ge 0, \quad \sum_i x_i = 1.
+\]
+
+The ideal candidate \(r^*\) may be used as a **warm start** — project it onto
+the mixture simplex and initialise \(x\) from the nearest convex combination
+of available paints — but it does not appear in the objective function.
 
 Phase H replaces the linear model with K-M arithmetic mixing.  Existing
 Phase G results must remain available for comparison after that upgrade.
@@ -684,36 +746,44 @@ returns a result.
 
 ```python
 @dataclass(frozen=True)
-class PaintApproximation:
-    target: Spectrum
-    realised: Spectrum
+class PaintRealisation:
+    reference: Spectrum           # the fixed reference paint
+    realised: Spectrum            # the paint mixture reflectance
     fractions: Mapping[str, float]
-    spectral_error: float
-    conceal_delta_e00: float
+    conceal_delta_e00: float      # must be ≤ ε for the pair to be valid
     reveal_results: tuple[ConditionResult, ...]
+    ideal_candidate: Spectrum | None   # the Phase E target used as warm start, if any
+    ideal_reveal_delta_e00: float | None  # upper bound from ideal candidate
     model_name: str
     model_assumptions: Mapping[str, str]
 ```
 
+`spectral_error` relative to the ideal candidate is intentionally absent: the
+realised mixture is not required to match \(r^*\) spectrally, only to satisfy
+the perceptual constraints.  `ideal_reveal_delta_e00` is retained as a
+diagnostic showing how much of the ideal-candidate ceiling the paint realisation
+achieves.
+
 ## Acceptance criteria
 
 - Pure-paint targets recover the corresponding paint under the baseline model.
-- Approximation output exposes reference and reveal degradation honestly.
+- The optimiser finds mixture fractions whose XYZ under the conceal illuminant
+  matches the reference within tolerance, without spectrally targeting \(r^*\).
+- Output exposes conceal error and reveal strength honestly.
 - Candidate reporting distinguishes:
-  - ideal spectral potential;
-  - achieved approximation quality;
-  - realised metameric strength.
+  - ideal spectral potential (from Phase E);
+  - realised metameric strength (from Phase G optimisation);
+  - the fraction of the ideal ceiling achieved.
 - No physical accuracy claim is made for the baseline model.
 
 ## Note on the realisability gap
 
-Phase E ideal-metamer candidates will frequently have high spectral residuals
-under Phase G's baseline model.  This is expected and scientifically
-informative, not a failure.  The gap between ideal metamers (unconstrained
-reflectance) and paint-achievable metamers (constrained to the convex hull of
-available pigments) is itself a central research question.  The reporting
-should make this gap explicit and legible rather than suppressing
-low-realisability candidates.
+The convex hull of available Golden paints may not contain a mixture that
+satisfies the conceal constraint *and* achieves large reveal ΔE₀₀.  This is
+expected and scientifically informative, not a failure.  The gap between the
+ideal candidate's reveal ceiling and what the paint simplex can reach is a
+central research question.  Reports must make this gap explicit rather than
+suppressing low-reveal realisations.
 
 ---
 
