@@ -56,6 +56,15 @@ from metamerism.search.projection import (
     compute_null_space,
     projection_xyz,
 )
+from metamerism.search.realisability import (
+    DEFAULT_CONCEAL_DELTA_E00_LIMIT as DEFAULT_REALISABILITY_CONCEAL_LIMIT,
+)
+from metamerism.search.realisability import (
+    MODEL_NAME_LINEAR,
+    PaintRealisation,
+    RealisabilityConfig,
+    find_metameric_mixture,
+)
 
 __all__ = [
     "DEFAULT_CONCEAL_DELTA_E00_LIMIT",
@@ -63,17 +72,21 @@ __all__ = [
     "DEFAULT_MATRIX_VS_COLOUR_XYZ_TOLERANCE",
     "DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE",
     "DEFAULT_N_SMOOTH_DIRECTIONS",
+    "DEFAULT_REALISABILITY_CONCEAL_LIMIT",
     "DEFAULT_REFLECTANCE_BOUND_TOLERANCE",
     "DEFAULT_ROUGHNESS_LIMIT",
+    "MODEL_NAME_LINEAR",
     "CandidateGenerationConfig",
     "CandidateScore",
     "ConditionResult",
     "MetamerCandidate",
     "MetamerScore",
     "NullSpace",
+    "PaintRealisation",
     "PoolDiagnostics",
     "ProjectionDiagnostics",
     "RankingConfig",
+    "RealisabilityConfig",
     "SearchConfig",
     "SearchResult",
     "ViewingCondition",
@@ -85,6 +98,7 @@ __all__ = [
     "compute_null_space",
     "diversity_select",
     "feasible_step_interval",
+    "find_metameric_mixture",
     "generate_directional_metamers",
     "is_feasible",
     "max_bound_violation",
