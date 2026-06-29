@@ -1,251 +1,244 @@
-"""Streamlit MVP for Golden paint mixing."""
+"""Spectral paint mixing explorer — GOLDEN Heavy Body catalogue."""
 
 from __future__ import annotations
 
+import io
+
 import colour
 import matplotlib.pyplot as plt
-import pandas as pd
 import streamlit as st
 
 from metamerism.mixing import mix_spectra
 from metamerism.pigments import load_golden_heavy_body_paints
-from metamerism.visualization import (
-    perceived_colour_rgb,
-    plot_perceived_colour,
-    plot_spectrum,
-)
+from metamerism.visualization import perceived_colour_rgb
 
-OBSERVER_CHOICES = {
-    "10° Standard Observer": colour.MSDS_CMFS[
-        "CIE 1964 10 Degree Standard Observer"
-    ],
-    "2° Standard Observer": colour.MSDS_CMFS[
-        "CIE 1931 2 Degree Standard Observer"
-    ],
+OBSERVER_OPTIONS: dict[str, colour.MultiSpectralDistributions] = {
+    "CIE 1964 10°": colour.MSDS_CMFS["CIE 1964 10 Degree Standard Observer"],
+    "CIE 1931 2°": colour.MSDS_CMFS["CIE 1931 2 Degree Standard Observer"],
 }
 
+_CSS = """
+<style>
+.stApp { background: #f8f9fa; }
+section[data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e2e8f0; }
+[data-testid="stHeader"] { background: transparent; }
+.block-container { padding-top: 2rem; }
 
-@st.cache_data(show_spinner=False)
-def load_paints():
-    """Load the Golden paint catalogue once per session."""
+/* give sliders breathing room below their label */
+section[data-testid="stSidebar"] [data-testid="stSlider"] { margin-top: 0.5rem; }
+</style>
+"""
+
+
+# ── data / caching ───────────────────────────────────────────────────────────
+
+@st.cache_resource(show_spinner=False)
+def _load_paints():
+    """Load catalogue once; cache_resource returns the same object with no copy overhead."""
     return load_golden_heavy_body_paints()
 
 
-def inject_styles() -> None:
-    """Apply a restrained light theme to the app."""
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background: linear-gradient(180deg, #f7f9fc 0%, #edf2f7 100%);
-            color: #0f172a;
-        }
-        section[data-testid="stSidebar"] {
-            background: #eef3f8;
-        }
-        section[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-            padding-right: 1rem;
-        }
-        [data-testid="stHeader"] {
-            background: transparent;
-        }
-        [data-testid="stSidebarContent"] {
-            padding-top: 1rem;
-        }
-        .block-container {
-            padding-top: 1.25rem;
-        }
-        .swatch-card {
-            border: 1px solid rgba(15, 23, 42, 0.12);
-            border-radius: 16px;
-            padding: 0.75rem;
-            background: rgba(255, 255, 255, 0.8);
-            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
-        }
-        .swatch-chip {
-            height: 88px;
-            border-radius: 14px;
-            border: 1px solid rgba(15, 23, 42, 0.16);
-            margin-bottom: 0.65rem;
-        }
-        .swatch-title {
-            font-size: 1rem;
-            font-weight: 650;
-            line-height: 1.2;
-            margin: 0 0 0.2rem 0;
-        }
-        .swatch-meta {
-            font-size: 0.84rem;
-            color: #475569;
-            margin: 0;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+@st.cache_resource(show_spinner=False)
+def _paint_lookup() -> dict:
+    return {p.paint_name: p for p in _load_paints()}
 
 
-def build_mix_figure(mixture, *, cmfs) -> plt.Figure:
-    """Render spectrum and perceived-colour previews for a mixture."""
-    fig, (ax_spectrum, ax_colour) = plt.subplots(
-        2,
-        1,
-        figsize=(10, 6),
-        gridspec_kw={"height_ratios": [3, 1]},
-        constrained_layout=True,
-    )
+@st.cache_data(show_spinner=False)
+def _all_swatch_rgbs(observer_key: str) -> dict[str, tuple[int, int, int]]:
+    """Pre-compute perceived colours for all paints at once on first use."""
+    cmfs = OBSERVER_OPTIONS[observer_key]
+    result = {}
+    for p in _load_paints():
+        rgb = perceived_colour_rgb(p.reflectance, cmfs=cmfs)
+        result[p.paint_name] = tuple(round(x * 255) for x in rgb)
+    return result
+
+
+def _swatch_rgb(paint_name: str, observer_key: str) -> tuple[int, int, int]:
+    return _all_swatch_rgbs(observer_key)[paint_name]  # type: ignore[return-value]
+
+
+@st.cache_data(show_spinner=False)
+def _mix_result(
+    paint_names: tuple[str, ...],
+    weights: tuple[float, ...],
+    observer_key: str,
+) -> tuple[tuple[int, int, int], bytes]:
+    """Mix colour (sRGB 0–255) + spectrum PNG — cached per unique combination."""
+    lookup = _paint_lookup()
+    selected = [lookup[n] for n in paint_names]
+    mix = mix_spectra([p.ks for p in selected], list(weights), mode="ks")
+
+    cmfs = OBSERVER_OPTIONS[observer_key]
+    rgb_f = perceived_colour_rgb(mix, cmfs=cmfs)
+    rgb_i: tuple[int, int, int] = tuple(round(x * 255) for x in rgb_f)  # type: ignore[assignment]
+
+    wl = mix.wavelengths
+    refl_pct = mix.values * 100.0
+
+    fig, ax = plt.subplots(figsize=(9, 3.4))
     fig.patch.set_facecolor("white")
-    plot_spectrum(mixture, ax=ax_spectrum, color="black")
-    ax_spectrum.set_title("Mixed reflectance")
-    plot_perceived_colour(mixture, ax=ax_colour, cmfs=cmfs, title="Perceived colour")
-    return fig
+    ax.set_facecolor("white")
+    ax.plot(wl, refl_pct, color="#0f172a", linewidth=1.8)
+    ax.fill_between(wl, refl_pct, alpha=0.06, color="#0f172a")
+    ax.set_xlabel("Wavelength (nm)", fontsize=10, color="#475569")
+    ax.set_ylabel("Reflectance (%)", fontsize=10, color="#475569")
+    ax.set_xlim(float(wl[0]), float(wl[-1]))
+    ax.set_ylim(0, 102)
+    ax.tick_params(colors="#475569", labelsize=9)
+    ax.grid(True, color="#e2e8f0", linewidth=0.6, zorder=0)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.spines[["left", "bottom"]].set_color("#e2e8f0")
+    fig.tight_layout(pad=0.5)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    buf.seek(0)
+    return rgb_i, buf.read()
 
 
-def ensure_weight_state(selected_names: list[str]) -> None:
-    """Initialize raw weights for newly selected paints."""
-    for name in selected_names:
-        key = f"weight::{name}"
-        if key not in st.session_state:
-            st.session_state[key] = 1.0
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+def _css_rgb(rgb: tuple[int, int, int]) -> str:
+    return f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"
 
 
-def render_weight_controls(selected_paints) -> list[float]:
-    """Render relative-weight controls and return raw values."""
-    st.subheader("Recipe")
-    if st.button("Equal split", use_container_width=True):
-        for paint in selected_paints:
-            st.session_state[f"weight::{paint.paint_name}"] = 1.0
-        st.rerun()
-
-    raw_weights: list[float] = []
-    for paint in selected_paints:
-        key = f"weight::{paint.paint_name}"
-        row = st.columns([2.4, 1.3], vertical_alignment="center")
-        row[0].markdown(f"**{paint.paint_name}**")
-        raw_weights.append(
-            row[1].slider(
-                "Relative weight",
-                min_value=0.0,
-                max_value=1.0,
-                value=float(st.session_state[key]),
-                step=0.01,
-                key=key,
-                label_visibility="collapsed",
-            )
-        )
-
-    frame = pd.DataFrame(
-        {
-            "Paint": [paint.paint_name for paint in selected_paints],
-            "Raw": raw_weights,
-        }
-    )
-    raw_series = pd.Series(raw_weights, dtype="float64")
-    total = float(raw_series.sum())
-    frame["Share"] = (
-        raw_series / total if total > 0 else raw_series
-    ).map(lambda value: f"{value:.1%}")
-
-    st.dataframe(frame, hide_index=True, use_container_width=True)
-    st.caption("Relative weights are normalized automatically.")
-    return raw_weights
+def _normalised_weights(raw: list[int]) -> tuple[float, ...]:
+    """Normalise integer parts to fractions — integers hash cleanly so no rounding needed."""
+    total = sum(raw)
+    if total <= 0:
+        return tuple(0.0 for _ in raw)
+    return tuple(r / total for r in raw)
 
 
-def render_selected_swatches(selected_paints, *, cmfs) -> None:
-    """Render perceived-color swatches for the selected paints."""
-    st.subheader("Selected paint swatches")
-    cols = st.columns(min(4, len(selected_paints)))
-    for index, paint in enumerate(selected_paints):
-        rgb = perceived_colour_rgb(paint.reflectance, cmfs=cmfs)
-        rgb_css = ", ".join(f"{round(channel * 255)}" for channel in rgb)
-        with cols[index % len(cols)]:
-            st.markdown(
-                f"""
-                <div class="swatch-card">
-                  <div class="swatch-chip" style="background: rgb({rgb_css});"></div>
-                  <p class="swatch-title">{paint.paint_name}</p>
-                  <p class="swatch-meta">Product {paint.product_id}</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+# ── sidebar ───────────────────────────────────────────────────────────────────
 
+def _render_sidebar(paint_names: list[str]) -> tuple[list[str], str, list[float]]:
+    st.sidebar.markdown("## Mixing Lab")
 
-def render_app() -> None:
-    """Render the Streamlit app."""
-    st.set_page_config(page_title="Metamerism Mixing Lab", layout="wide")
-    inject_styles()
-
-    st.title("Metamerism Mixing Lab")
-
-    paints = load_paints()
-    paint_names = [paint.paint_name for paint in paints]
-    paint_lookup = {paint.paint_name: paint for paint in paints}
-
-    st.sidebar.subheader("Controls")
-    observer_label = st.sidebar.selectbox(
+    observer_key: str = st.sidebar.selectbox(
         "Observer",
-        list(OBSERVER_CHOICES.keys()),
+        list(OBSERVER_OPTIONS.keys()),
         index=0,
-    )
-    selected_names = st.sidebar.multiselect(
+        help="Standard observer for reflectance → colour conversion.",
+    )  # type: ignore[assignment]
+
+    selected_names: list[str] = st.sidebar.multiselect(
         "Paints",
         paint_names,
-        default=paint_names[:3],
+        default=paint_names[:2],
+        placeholder="Choose paints…",
     )
 
     if not selected_names:
-        st.info("Select at least one paint to build a mix.")
-        st.stop()
+        return selected_names, observer_key, []
 
-    ensure_weight_state(selected_names)
-    selected_paints = [paint_lookup[name] for name in selected_names]
-    cmfs = OBSERVER_CHOICES[observer_label]
+    st.sidebar.divider()
 
-    left_col, right_col = st.columns([2.3, 1], gap="large")
+    if st.sidebar.button("Equal split", use_container_width=True):
+        for name in selected_names:
+            st.session_state[f"w::{name}"] = 50
+        st.rerun()
 
-    with right_col:
-        with st.container(border=True):
-            raw_weights = render_weight_controls(selected_paints)
+    # Read current slider values first so we can compute shares before rendering.
+    for name in selected_names:
+        if f"w::{name}" not in st.session_state:
+            st.session_state[f"w::{name}"] = 50
 
-        with st.container(border=True):
-            st.subheader("Mixing model")
-            st.write("Measured K/S blend")
-            st.caption("Mixing uses the measured K/S table for the selected paints.")
+    raw_weights: list[int] = [st.session_state[f"w::{name}"] for name in selected_names]
+    total = sum(raw_weights)
+
+    for i, name in enumerate(selected_names):
+        key = f"w::{name}"
+        rgb = _swatch_rgb(name, observer_key)
+        share_pct = f"{raw_weights[i] / total:.0%}" if total > 0 else "—"
+
+        st.sidebar.markdown(
+            f"""<div style="display:flex;align-items:center;gap:9px;margin-top:0.7rem">
+              <div style="
+                width:28px;height:28px;border-radius:5px;flex-shrink:0;
+                background:{_css_rgb(rgb)};border:1px solid rgba(0,0,0,0.15);
+              "></div>
+              <span style="font-size:0.84rem;font-weight:500;color:#0f172a;flex:1;
+                           white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                {name}
+              </span>
+              <span style="font-size:0.84rem;font-weight:600;color:#0f172a;flex-shrink:0">
+                {share_pct}
+              </span>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+        st.sidebar.slider(
+            name,
+            min_value=0,
+            max_value=100,
+            step=1,
+            key=key,
+            label_visibility="collapsed",
+        )
+        raw_weights[i] = st.session_state[key]  # pick up any change from this render
+
+    return selected_names, observer_key, raw_weights
+
+
+# ── main area ────────────────────────────────────────────────────────────────
+
+def render_app() -> None:
+    st.set_page_config(page_title="Mixing Lab", layout="wide", page_icon="🎨")
+    st.markdown(_CSS, unsafe_allow_html=True)
+
+    paint_names = [p.paint_name for p in _load_paints()]
+    # Warm swatch cache for all observers so first selection is instant.
+    for _ok in OBSERVER_OPTIONS:
+        _all_swatch_rgbs(_ok)
+    selected_names, observer_key, raw_weights = _render_sidebar(paint_names)
+
+    if not selected_names:
+        st.markdown("## Mixing Lab")
+        st.info("Select paints in the sidebar to begin.", icon="🎨")
+        return
 
     if sum(raw_weights) <= 0:
-        st.warning("At least one relative weight must be positive.")
-        st.stop()
+        st.warning("Set at least one weight above zero.", icon="⚠️")
+        return
 
-    mixture = mix_spectra(
-        [paint.ks for paint in selected_paints],
-        raw_weights,
-        mode="ks",
+    norm_weights = _normalised_weights(raw_weights)
+    mix_rgb, spectrum_png = _mix_result(tuple(selected_names), norm_weights, observer_key)
+
+    # ── mix colour hero ──────────────────────────────────────────────────────
+    luma = 0.299 * mix_rgb[0] + 0.587 * mix_rgb[1] + 0.114 * mix_rgb[2]
+    text_col = "#ffffff" if luma < 128 else "#0f172a"
+
+    st.markdown(
+        f"""<div style="
+            background:{_css_rgb(mix_rgb)};
+            border-radius:16px;
+            border:1px solid rgba(0,0,0,0.1);
+            height:200px;
+            display:flex;
+            align-items:flex-end;
+            padding:1rem 1.25rem;
+            margin-bottom:0.5rem;
+        ">
+            <span style="font-size:0.85rem;font-weight:500;color:{text_col};opacity:0.75">
+                Predicted mix
+            </span>
+        </div>""",
+        unsafe_allow_html=True,
     )
 
-    recipe = pd.DataFrame(
-        {
-            "Paint": [paint.paint_name for paint in selected_paints],
-            "Raw": pd.Series(raw_weights, dtype="float64").round(3),
-            "Share": (
-                pd.Series(raw_weights, dtype="float64")
-                / max(sum(raw_weights), 1e-12)
-            ).map(lambda value: f"{value:.1%}"),
-        }
+    st.markdown(
+        "<p style='font-size:0.78rem;color:#94a3b8;margin-top:0.3rem;margin-bottom:1.5rem'>"
+        "Kubelka–Munk arithmetic K/S blend · GOLDEN Heavy Body"
+        "</p>",
+        unsafe_allow_html=True,
     )
 
-    with left_col:
-        with st.container(border=True):
-            render_selected_swatches(selected_paints, cmfs=cmfs)
-
-        with st.container(border=True):
-            fig = build_mix_figure(mixture, cmfs=cmfs)
-            st.pyplot(fig, clear_figure=True)
-            plt.close(fig)
-
-        with st.container(border=True):
-            st.subheader("Mix summary")
-            st.dataframe(recipe, hide_index=True, use_container_width=True)
+    # ── reflectance spectrum ─────────────────────────────────────────────────
+    st.image(spectrum_png, use_container_width=True)
+    st.caption("Mixed reflectance spectrum")
 
 
 if __name__ == "__main__":
