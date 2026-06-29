@@ -6,6 +6,13 @@ from metamerism.search.feasibility import (
     is_feasible,
     max_bound_violation,
 )
+from metamerism.search.generate import (
+    DEFAULT_ENDPOINT_FRACTION,
+    CandidateGenerationConfig,
+    MetamerCandidate,
+    generate_directional_metamers,
+    spectral_roughness,
+)
 from metamerism.search.metamer import (
     ConditionResult,
     MetamerScore,
@@ -30,10 +37,13 @@ from metamerism.search.projection import (
 
 __all__ = [
     "DEFAULT_CONCEAL_DELTA_E00_LIMIT",
+    "DEFAULT_ENDPOINT_FRACTION",
     "DEFAULT_MATRIX_VS_COLOUR_XYZ_TOLERANCE",
     "DEFAULT_NULL_SPACE_RELATIVE_TOLERANCE",
     "DEFAULT_REFLECTANCE_BOUND_TOLERANCE",
+    "CandidateGenerationConfig",
     "ConditionResult",
+    "MetamerCandidate",
     "MetamerScore",
     "NullSpace",
     "ViewingCondition",
@@ -41,6 +51,7 @@ __all__ = [
     "build_xyz_projection",
     "compute_null_space",
     "feasible_step_interval",
+    "generate_directional_metamers",
     "is_feasible",
     "max_bound_violation",
     "passes_conceal_threshold",
@@ -48,4 +59,5 @@ __all__ = [
     "rank_candidates",
     "score_condition",
     "score_metameric_pair",
+    "spectral_roughness",
 ]
