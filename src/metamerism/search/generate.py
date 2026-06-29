@@ -194,6 +194,42 @@ class MetamerCandidate:
             "provenance_notes": self.provenance.notes,
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> MetamerCandidate:
+        from metamerism.core import Provenance, Spectrum, SpectrumDomain
+
+        prov = Provenance(
+            source=d["provenance_source"],
+            notes=d.get("provenance_notes"),
+        )
+        spectrum = Spectrum.from_arrays(
+            np.array(d["spectrum_wavelengths"], dtype=np.float64),
+            np.array(d["spectrum_values"], dtype=np.float64),
+            domain=SpectrumDomain.REFLECTANCE,
+            provenance=prov,
+            validate=False,
+        )
+        source_reference = Spectrum.from_arrays(
+            np.array(d["reference_wavelengths"], dtype=np.float64),
+            np.array(d["reference_values"], dtype=np.float64),
+            domain=SpectrumDomain.REFLECTANCE,
+            provenance=Provenance(source="restored_reference"),
+            validate=False,
+        )
+        return cls(
+            spectrum=spectrum,
+            source_reference=source_reference,
+            null_space_coordinates=np.array(
+                d["null_space_coordinates"], dtype=np.float64
+            ),
+            endpoint=d["endpoint"],
+            alpha=d["alpha"],
+            max_bound_violation=d["max_bound_violation"],
+            roughness=d["roughness"],
+            conceal_delta_e00=d["conceal_delta_e00"],
+            provenance=prov,
+        )
+
 
 def generate_directional_metamers(
     reference: Spectrum,
