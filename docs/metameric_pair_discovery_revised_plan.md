@@ -154,6 +154,32 @@ Do not create `spectral/`, `visualisation/`, or `experiments/` package trees unl
 
 ---
 
+# Prerequisite — Illuminant factory
+
+`src/metamerism/illuminants/__init__.py` currently contains only a docstring.
+Phase A cannot proceed without a way to express named illuminants in the project
+type system.
+
+Before Phase A, add a thin factory to `illuminants/`:
+
+```python
+def get_illuminant(name: str) -> Spectrum:
+    """Return a named CIE illuminant wrapped as a project Spectrum.
+
+    Accepted names are any key in ``colour.SDS_ILLUMINANTS``, e.g.
+    ``"D65"``, ``"D50"``, ``"A"``, ``"F11"``.
+    """
+```
+
+The returned `Spectrum` must have `domain=SpectrumDomain.ILLUMINANT` and
+complete provenance.  `ViewingCondition.illuminant` everywhere in this plan
+refers to such a wrapped object.
+
+This is the only new public surface needed.  The illuminant SPD data itself
+comes from `colour-science`; do not embed or duplicate it.
+
+---
+
 # Phase A — Conceal/reveal scoring vertical slice
 
 ## Goal
@@ -252,6 +278,22 @@ The preferred convention is that a perfect reflector has:
 Y = 100.
 \]
 
+The normalization factor that achieves this is:
+
+\[
+k = \frac{100}{\sum_i I(\lambda_i)\,\overline{y}(\lambda_i)\,\Delta\lambda}
+\]
+
+and each row of the projection matrix is:
+
+\[
+A[\text{row},\,i] = k \cdot I(\lambda_i) \cdot \overline{c}_{\text{row}}(\lambda_i) \cdot \Delta\lambda
+\]
+
+where \(\overline{c}\) is X, Y, or Z.  This formula must be implemented to
+match `colour.sd_to_XYZ` exactly.  The acceptance test "matrix XYZ agrees with
+direct `colour` XYZ" will detect any off-by-k or off-by-normalisation bugs.
+
 ## Required functions
 
 ```python
@@ -330,22 +372,38 @@ For a supplied reference reflectance \(r_c\):
 1. Align it to the project spectral shape.
 2. Construct the conceal projection \(A_0\).
 3. Compute its null-space basis \(N\).
-4. Sample a direction \(d = Nz\).
-5. Compute the feasible interval \([\alpha_-, \alpha_+]\) satisfying:
+4. Rank basis vectors by second-difference roughness \(\|D^2 b\|_2^2\) and
+   preferentially sample directions from the smoother end of the basis (e.g.
+   weight sampling probability \(\propto 1/(\text{roughness}+\varepsilon)\)).
+   Sampling uniformly across all 78 null-space dimensions produces
+   overwhelmingly rough spectra; most would fail the roughness filter in Phase D,
+   making generation very inefficient.  This is an implementation note, not a
+   change to the mathematical model.
+5. Sample a direction \(d = Nz\).
+6. Compute the feasible interval \([\alpha_-, \alpha_+]\) satisfying:
 
    \[
    0 \le r_c+\alpha d \le1.
    \]
 
-6. Generate one or both endpoint candidates:
+7. Generate inset candidates using `endpoint_fraction` \(f \in (0, 1]\):
 
    \[
-   r_- = r_c+\alpha_-d,\qquad r_+=r_c+\alpha_+d.
+   r_- = r_c + \bigl(\alpha_- + f\tfrac{\Delta\alpha}{2}\bigr)\,d,\qquad
+   r_+ = r_c + \bigl(\alpha_+ - f\tfrac{\Delta\alpha}{2}\bigr)\,d,
    \]
 
-7. Convert candidates to project `Spectrum` objects with complete provenance.
-8. Verify conceal difference through direct `colour` scoring.
-9. Retain only candidates meeting the named conceal tolerance.
+   where \(\Delta\alpha = \alpha_+ - \alpha_-\).  Setting \(f=1\) steps to
+   the exact feasibility boundary (forcing at least one wavelength to 0 or 1).
+   Values \(f < 1\) pull candidates inward, avoiding saturated boundary spectra
+   while still exploring the full feasible range.
+
+8. Compute roughness \(\|D^2 r\|_2^2\) for each candidate immediately and store
+   it on `MetamerCandidate`.  Do not defer this to Phase D — the computation is
+   a single numpy operation and is needed for provenance and early rejection.
+9. Convert candidates to project `Spectrum` objects with complete provenance.
+10. Verify conceal difference through direct `colour` scoring.
+11. Retain only candidates meeting the named conceal tolerance.
 
 ## Suggested API
 
@@ -419,7 +477,11 @@ R(r) = \|D^2r\|_2^2.
 D(r_1,r_2)=\|W(r_1-r_2)\|_2.
 \]
 
-Initially use \(W=I\), but structure the implementation so wavelength weighting can be introduced later.
+Initially use \(W=I\).  `colorimetry/difference.py` already implements the
+RMS variant of this as `spectral_distance` (trapezoid integration, equivalent
+to discrete L2 up to \(\Delta\lambda\) scaling).  Reuse and extend that
+function rather than introducing a new implementation.  Wavelength weighting
+can be added as an optional `weights` argument to the existing function later.
 
 ### Boundary saturation
 
@@ -554,7 +616,19 @@ Use existing `pigments/` loading and `mixing/` interfaces. Do not create a secon
 
 ## First realisability model
 
-Begin with an explicitly labelled baseline approximation model, even if it is only a constrained linear/convex mixture in reflectance space.
+Begin with an explicitly labelled **linear-in-reflectance baseline**.  Do not
+use K-M mixing here.
+
+The baseline forward model is:
+
+\[
+R_{\mathrm{mix}}(x) = \sum_i x_i R_i
+\]
+
+where \(R_i\) are the measured drawdown reflectances from the Golden library.
+This is a convex model: the objective is quadratic in \(x\) and the constraints
+are linear, so the problem is a quadratic programme solvable by NNLS or a
+standard QP solver.
 
 For an ideal target \(r_t\), solve:
 
@@ -564,8 +638,8 @@ For an ideal target \(r_t\), solve:
 \|W(R_{\mathrm{mix}}(x)-r_t)\|_2^2
 +
 \lambda_{\mathrm{conceal}}
-\|XYZ_{\mathrm{conceal}}(R_{\mathrm{mix}}(x))-
-  XYZ_{\mathrm{conceal}}(r_t)\|_2^2
+\|A_0 R_{\mathrm{mix}}(x)-
+  A_0 r_t\|_2^2
 \]
 
 subject to:
@@ -574,7 +648,16 @@ subject to:
 x_i \ge 0,\qquad \sum_i x_i=1.
 \]
 
-The target is not accepted as “paint-realizable” merely because the solver returns a result.
+Note: because \(R_{\mathrm{mix}}\) is linear in \(x\), both penalty terms are
+quadratic in \(x\), making this a clean convex QP.  The XYZ conceal term uses
+the projection matrix \(A_0\) from Phase B; this avoids repeated `colour`
+calls inside the solver loop.
+
+Phase H replaces the linear model with K-M arithmetic mixing.  Existing
+Phase G results must remain available for comparison after that upgrade.
+
+The target is not accepted as “paint-realizable” merely because the solver
+returns a result.
 
 ## Required output
 
@@ -600,6 +683,16 @@ class PaintApproximation:
   - achieved approximation quality;
   - realised metameric strength.
 - No physical accuracy claim is made for the baseline model.
+
+## Note on the realisability gap
+
+Phase E ideal-metamer candidates will frequently have high spectral residuals
+under Phase G's baseline model.  This is expected and scientifically
+informative, not a failure.  The gap between ideal metamers (unconstrained
+reflectance) and paint-achievable metamers (constrained to the convex hull of
+available pigments) is itself a central research question.  The reporting
+should make this gap explicit and legible rather than suppressing
+low-realisability candidates.
 
 ---
 
@@ -696,6 +789,18 @@ All searches must be configured by serialisable data, preferably JSON or YAML. E
 - random seed;
 - generator and ranking parameters;
 - paint-library and mixing-model versions where applicable.
+
+## Serialization
+
+Frozen dataclasses with `NDArray[np.float64]` fields are not JSON-serializable
+by default.  Decide the serialization approach in Phase A and apply it
+consistently — retrofitting it later across many result types is painful.
+
+Recommended approach: give each major result type a `to_dict()` method that
+converts arrays to plain Python lists, and a matching `from_dict()` class
+method.  A custom JSON encoder/decoder can then delegate to these.
+`CandidateGenerationConfig` must be serializable to JSON so that result files
+are self-describing.
 
 ## Numerical tolerances
 
