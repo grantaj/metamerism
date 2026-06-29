@@ -6,6 +6,7 @@ import io
 
 import colour
 import matplotlib.pyplot as plt
+import pandas as pd
 import streamlit as st
 
 from metamerism.mixing import mix_spectra
@@ -63,8 +64,8 @@ def _mix_result(
     paint_names: tuple[str, ...],
     weights: tuple[float, ...],
     observer_key: str,
-) -> tuple[tuple[int, int, int], bytes]:
-    """Mix colour (sRGB 0–255) + spectrum PNG — cached per unique combination."""
+) -> tuple[tuple[int, int, int], tuple[float, float, float], bytes]:
+    """Mix colour, CIE Lab, and spectrum PNG — cached per unique combination."""
     lookup = _paint_lookup()
     selected = [lookup[n] for n in paint_names]
     mix = mix_spectra([p.ks for p in selected], list(weights), mode="ks")
@@ -73,14 +74,43 @@ def _mix_result(
     rgb_f = perceived_colour_rgb(mix, cmfs=cmfs)
     rgb_i: tuple[int, int, int] = tuple(round(x * 255) for x in rgb_f)  # type: ignore[assignment]
 
+    # CIE Lab — always D65/10° to match measurement conditions
+    _shape = colour.SpectralShape(380, 780, 5)
+    _cmfs10 = colour.MSDS_CMFS["CIE 1964 10 Degree Standard Observer"].copy().align(_shape)
+    _ill = colour.SDS_ILLUMINANTS["D65"].copy().align(_shape)
+    xyz = colour.sd_to_XYZ(mix.sd.copy().align(_shape), cmfs=_cmfs10, illuminant=_ill)
+    lab_arr = colour.XYZ_to_Lab(xyz / 100.0)
+    lab: tuple[float, float, float] = (float(lab_arr[0]), float(lab_arr[1]), float(lab_arr[2]))
+
+    # Spectrum chart
     wl = mix.wavelengths
     refl_pct = mix.values * 100.0
+    all_swatches = _all_swatch_rgbs(observer_key)
 
-    fig, ax = plt.subplots(figsize=(9, 3.4))
+    fig, ax = plt.subplots(figsize=(9, 3.6))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
-    ax.plot(wl, refl_pct, color="#0f172a", linewidth=1.8)
-    ax.fill_between(wl, refl_pct, alpha=0.06, color="#0f172a")
+
+    # Component curves — use each paint's perceived colour, darkened for legibility
+    for name, paint in zip(paint_names, selected):
+        r, g, b = all_swatches[name]
+        luma = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+        if luma > 0.62:
+            scale = 0.62 / luma
+            r, g, b = int(r * scale), int(g * scale), int(b * scale)
+        ax.plot(
+            paint.reflectance.wavelengths,
+            paint.reflectance.values * 100.0,
+            color=(r / 255, g / 255, b / 255),
+            linewidth=1.2,
+            alpha=0.75,
+            label=name,
+        )
+
+    # Mix curve — bold, dark, on top
+    ax.plot(wl, refl_pct, color="#0f172a", linewidth=2.2, label="Mix", zorder=5)
+    ax.fill_between(wl, refl_pct, alpha=0.05, color="#0f172a", zorder=4)
+
     ax.set_xlabel("Wavelength (nm)", fontsize=10, color="#475569")
     ax.set_ylabel("Reflectance (%)", fontsize=10, color="#475569")
     ax.set_xlim(float(wl[0]), float(wl[-1]))
@@ -89,13 +119,14 @@ def _mix_result(
     ax.grid(True, color="#e2e8f0", linewidth=0.6, zorder=0)
     ax.spines[["top", "right"]].set_visible(False)
     ax.spines[["left", "bottom"]].set_color("#e2e8f0")
+    ax.legend(fontsize=8, framealpha=0.9, loc="upper right", ncol=max(1, len(paint_names) // 4))
     fig.tight_layout(pad=0.5)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=150, bbox_inches="tight", facecolor="white")
     plt.close(fig)
     buf.seek(0)
-    return rgb_i, buf.read()
+    return rgb_i, lab, buf.read()
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -205,7 +236,7 @@ def render_app() -> None:
         return
 
     norm_weights = _normalised_weights(raw_weights)
-    mix_rgb, spectrum_png = _mix_result(tuple(selected_names), norm_weights, observer_key)
+    mix_rgb, mix_lab, spectrum_png = _mix_result(tuple(selected_names), norm_weights, observer_key)
 
     # ── mix colour hero ──────────────────────────────────────────────────────
     luma = 0.299 * mix_rgb[0] + 0.587 * mix_rgb[1] + 0.114 * mix_rgb[2]
@@ -216,11 +247,11 @@ def render_app() -> None:
             background:{_css_rgb(mix_rgb)};
             border-radius:16px;
             border:1px solid rgba(0,0,0,0.1);
-            height:200px;
+            height:180px;
             display:flex;
             align-items:flex-end;
             padding:1rem 1.25rem;
-            margin-bottom:0.5rem;
+            margin-bottom:0.4rem;
         ">
             <span style="font-size:0.85rem;font-weight:500;color:{text_col};opacity:0.75">
                 Predicted mix
@@ -238,7 +269,33 @@ def render_app() -> None:
 
     # ── reflectance spectrum ─────────────────────────────────────────────────
     st.image(spectrum_png, use_container_width=True)
-    st.caption("Mixed reflectance spectrum")
+
+    # ── Lab table: component paints + mix row ────────────────────────────────
+    lookup = _paint_lookup()
+    L, a, b = mix_lab
+    rows = []
+    for name in selected_names:
+        p = lookup[name]
+        L_p, a_p, b_p = p.lab_d65_10
+        rows.append({"Paint": name, "L*": round(L_p, 1), "a*": round(a_p, 1), "b*": round(b_p, 1)})
+    rows.append({"Paint": "Mix (predicted)", "L*": round(L, 1), "a*": round(a, 1), "b*": round(b, 1)})
+
+    st.markdown(
+        "<p style='font-size:0.78rem;color:#64748b;margin-top:1.2rem;margin-bottom:0.3rem'>"
+        "CIE L*a*b* — D65 · 10° · components measured, mix predicted</p>",
+        unsafe_allow_html=True,
+    )
+    st.dataframe(
+        pd.DataFrame(rows),
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Paint": st.column_config.TextColumn("Paint", width="large"),
+            "L*": st.column_config.NumberColumn("L*", format="%.1f"),
+            "a*": st.column_config.NumberColumn("a*", format="%.1f"),
+            "b*": st.column_config.NumberColumn("b*", format="%.1f"),
+        },
+    )
 
 
 if __name__ == "__main__":
